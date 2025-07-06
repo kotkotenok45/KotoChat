@@ -2,7 +2,7 @@ import os
 import asyncio
 import websockets
 
-PORT = int(os.environ.get("PORT", 8000))  # порт из окружения или 8000 по умолчанию
+PORT = int(os.environ.get("PORT", 8000))
 
 connected = set()
 
@@ -10,6 +10,7 @@ async def handler(websocket):
     connected.add(websocket)
     try:
         async for message in websocket:
+            # Рассылаем всем кроме отправителя
             for conn in connected:
                 if conn != websocket:
                     await conn.send(message)
