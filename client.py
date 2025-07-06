@@ -1,67 +1,74 @@
-# client.py
-from kivymd.app import MDApp
-from kivymd.uix.toolbar import MDToolbar
-from kivymd.uix.list import OneLineListItem
 from kivy.lang import Builder
 from kivymd.app import MDApp
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivymd.uix.list import OneLineListItem
 from kivy.clock import Clock
+from kivymd.toast import toast
+
+from cryptography.fernet import Fernet
+
 import asyncio
 import websockets
 
 KV = '''
 ScreenManager:
-    LoginScreen:
+    NickScreen:
     ChatScreen:
 
-<LoginScreen>:
-    name: "login"
+<NickScreen>:
+    name: "nick"
     MDBoxLayout:
-        orientation: 'vertical'
-        padding: dp(40)
-        spacing: dp(20)
+        orientation: "vertical"
+        padding: "20dp"
+        spacing: "20dp"
         MDLabel:
-            text: "Введите имя"
+            text: "Введите ваш ник:"
             halign: "center"
-            font_style: "H4"
+            font_style: "H5"
         MDTextField:
-            id: username
-            hint_text: "Имя"
-            size_hint_x: 1
-            pos_hint: {"center_x": 0.5}
-            multiline: False
+            id: nick_input
+            hint_text: "Ник"
+            max_text_length: 20
+            pos_hint: {"center_x": .5}
+            size_hint_x: 0.8
         MDRaisedButton:
             text: "Войти"
-            pos_hint: {"center_x": 0.5}
+            pos_hint: {"center_x": .5}
             on_release:
-                app.login(username.text)
+                app.set_nick(nick_input.text)
 
 <ChatScreen>:
     name: "chat"
     MDBoxLayout:
         orientation: 'vertical'
-        MDToolbar:
+
+        MDTopAppBar:
             title: "Мессенджер"
             elevation: 10
+            left_action_items: [["phone", lambda x: app.start_call()]]
+            right_action_items: [["logout", lambda x: app.logout()]]
+
         ScrollView:
             MDList:
-                id: messages
+                id: messages_list
+
         MDBoxLayout:
             size_hint_y: None
-            height: "48dp"
-            padding: dp(10)
-            spacing: dp(10)
+            height: "56dp"
+            padding: "8dp"
+            spacing: "8dp"
+
             MDTextField:
                 id: message_input
                 hint_text: "Введите сообщение"
                 multiline: False
+
             MDRaisedButton:
                 text: "Отправить"
                 on_release: app.send_message()
 '''
 
-class LoginScreen(Screen):
+class NickScreen(Screen):
     pass
 
 class ChatScreen(Screen):
@@ -69,46 +76,62 @@ class ChatScreen(Screen):
 
 class MessengerApp(MDApp):
     def build(self):
-        self.sm = Builder.load_string(KV)
-        self.username = None
+        self.title = "Шифрованный Мессенджер"
+        self.nickname = None
+        self.key = Fernet.generate_key()
+        self.cipher = Fernet(self.key)
         self.ws = None
-        return self.sm
+        self.loop = asyncio.get_event_loop()
+        return Builder.load_string(KV)
 
-    def login(self, username):
-        if username.strip():
-            self.username = username.strip()
-            self.sm.current = "chat"
-            asyncio.create_task(self.connect())
+    def set_nick(self, nick):
+        nick = nick.strip()
+        if not nick:
+            toast("Ник не может быть пустым")
+            return
+        self.nickname = nick
+        self.root.current = "chat"
+        # Запуск подключения к серверу в отдельном потоке
+        self.loop.create_task(self.connect_to_server())
 
-    async def connect(self):
-        url = f"ws://localhost:8000/ws/{self.username}"  # Замени localhost на адрес сервера
+    async def connect_to_server(self):
+        uri = "ws://localhost:8000/ws"  # поменяй на свой сервер
         try:
-            self.ws = await websockets.connect(url)
-            asyncio.create_task(self.receive())
+            self.ws = await websockets.connect(uri)
+            await self.ws.send(self.cipher.encrypt(f"[{self.nickname}] присоединился".encode()).decode())
+            asyncio.create_task(self.receive_messages())
         except Exception as e:
-            self.show_message(f"Ошибка подключения: {e}")
+            toast(f"Ошибка подключения: {e}")
 
-    async def receive(self):
+    async def receive_messages(self):
         try:
             async for message in self.ws:
-                self.show_message(message)
+                decrypted = self.cipher.decrypt(message.encode()).decode()
+                Clock.schedule_once(lambda dt: self.display_message(decrypted))
         except Exception as e:
-            self.show_message(f"Соединение прервано: {e}")
+            Clock.schedule_once(lambda dt: toast(f"Ошибка: {e}"))
 
-    def show_message(self, text):
-        def add(_):
-            messages = self.sm.get_screen("chat").ids.messages
-            messages.add_widget(OneLineListItem(text=text))
-        Clock.schedule_once(add)
+    def display_message(self, message):
+        chat_screen = self.root.get_screen("chat")
+        chat_screen.ids.messages_list.add_widget(OneLineListItem(text=message))
 
     def send_message(self):
-        msg_input = self.sm.get_screen("chat").ids.message_input
-        text = msg_input.text.strip()
-        if text and self.ws:
-            asyncio.create_task(self.ws.send(text))
-            self.show_message(f"Я: {text}")
+        msg_input = self.root.get_screen("chat").ids.message_input
+        msg = msg_input.text.strip()
+        if msg and self.ws:
+            full_msg = f"[{self.nickname}]: {msg}"
+            encrypted = self.cipher.encrypt(full_msg.encode()).decode()
+            asyncio.create_task(self.ws.send(encrypted))
             msg_input.text = ""
 
-if __name__ == '__main__':
-    import asyncio
-    asyncio.run(MessengerApp().async_run(async_lib="asyncio"))
+    def start_call(self):
+        toast("Звонок... (имитация)")
+
+    def logout(self):
+        if self.ws:
+            asyncio.create_task(self.ws.close())
+        self.nickname = None
+        self.root.current = "nick"
+
+if __name__ == "__main__":
+    MessengerApp().run()
