@@ -1,29 +1,24 @@
-# server.py
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
+import websockets
 
-app = FastAPI()
+connected = set()
 
-# Разрешаем подключение с клиента (замени * на домен, если хочешь)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-connections = {}
-
-@app.websocket("/ws/{username}")
-async def websocket_endpoint(websocket: WebSocket, username: str):
-    await websocket.accept()
-    connections[username] = websocket
+async def handler(websocket):
+    connected.add(websocket)
     try:
-        while True:
-            data = await websocket.receive_text()
-            # Для простоты рассылаем сообщение всем, кроме отправителя
-            for user, conn in connections.items():
-                if user != username:
-                    await conn.send_text(f"{username}: {data}")
-    except WebSocketDisconnect:
-        del connections[username]
+        async for message in websocket:
+            for conn in connected:
+                if conn != websocket:
+                    await conn.send(message)
+    except websockets.ConnectionClosed:
+        pass
+    finally:
+        connected.remove(websocket)
+
+async def main():
+    async with websockets.serve(handler, "0.0.0.0", 8000):
+        print("Server started")
+        await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())
