@@ -3,41 +3,42 @@ import asyncio
 import websockets
 from aiohttp import web
 
-connected = set()
-PORT = int(os.environ.get("PORT", 8000))
+connected_clients = set()
+PORT = int(os.environ.get("PORT", 10000))
 
-# WebSocket handler
+# WebSocket обработка
 async def ws_handler(websocket):
-    connected.add(websocket)
+    connected_clients.add(websocket)
     try:
         async for message in websocket:
-            for conn in connected:
-                if conn != websocket:
-                    await conn.send(message)
+            for client in connected_clients:
+                if client != websocket:
+                    await client.send(message)
     except websockets.ConnectionClosed:
         pass
     finally:
-        connected.remove(websocket)
+        connected_clients.remove(websocket)
 
-# Aiohttp endpoint to respond to GET / (for Render's health check)
-async def health_check(request):
-    return web.Response(text="WebSocket server is running!")
+# HTTP-запрос для проверки Render'ом
+async def handle_healthcheck(request):
+    return web.Response(text="Server is alive")
 
-# Start both HTTP and WebSocket server
+# Основной запуск
 async def main():
-    # Start WebSocket server
+    # WebSocket
     ws_server = await websockets.serve(ws_handler, "0.0.0.0", PORT)
 
-    # Start HTTP server
+    # HTTP для Render (обязателен!)
     app = web.Application()
-    app.router.add_get("/", health_check)
+    app.router.add_get("/", handle_healthcheck)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    print(f"Server running on port {PORT}")
-    await asyncio.Future()  # run forever
+    print(f"Сервер запущен на порту {PORT}")
+    await asyncio.Future()  # бесконечный цикл
 
 if __name__ == "__main__":
     asyncio.run(main())
