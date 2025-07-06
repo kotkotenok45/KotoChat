@@ -4,7 +4,7 @@ import websockets
 from aiohttp import web
 
 connected_clients = set()
-PORT = int(os.environ.get("PORT", 10000))
+PORT = int(os.environ.get("PORT", 8000))
 
 # WebSocket обработка
 async def ws_handler(websocket):
@@ -39,6 +39,7 @@ async def main():
 
     print(f"Сервер запущен на порту {PORT}")
     await asyncio.Future()  # бесконечный цикл
+python server.py
 
 if __name__ == "__main__":
     asyncio.run(main())
