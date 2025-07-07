@@ -1,0 +1,16 @@
+"scripts": {
+  "dist": "electron-builder"
+},
+"build": {
+  "appId": "com.kotkotenok.kotochat",
+  "productName": "KotoChat",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "**/*"
+  ],
+  "win": {
+    "target": "nsis"
+  }
+}
