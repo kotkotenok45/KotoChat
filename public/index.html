@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Кроссплатформенный Мессенджер</title>
+<style>
+  body { margin: 0; font-family: Arial, sans-serif; display: flex; height: 100vh; }
+  #sidebar { width: 250px; background: #2f3542; color: white; display: flex; flex-direction: column; padding: 10px; }
+  #sidebar input, #sidebar button { margin-top: 5px; padding: 7px; border-radius: 4px; border: none; }
+  #sidebar input { width: 100%; box-sizing: border-box; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #chatHeader { background: #57606f; color: white; padding: 10px; }
+  #messages { flex: 1; overflow-y: auto; padding: 10px; background: #f1f2f6; }
+  .msg { margin: 5px 0; max-width: 60%; padding: 7px 12px; border-radius: 15px; }
+  .msg.you { background: #70a1ff; color: white; align-self: flex-end; margin-left: auto; }
+  .msg.other { background: #dfe4ea; color: #2f3542; align-self: flex-start; margin-right: auto; }
+  #inputArea { display: flex; padding: 10px; background: #dfe4ea; }
+  #inputArea input[type=text] { flex: 1; padding: 10px; border-radius: 20px; border: 1px solid #ccc; }
+  #inputArea button { margin-left: 10px; padding: 10px 20px; border-radius: 20px; border: none; background: #2ed573; color: white; cursor: pointer; }
+  #groups { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .group-btn { background: #3742fa; border: none; color: white; padding: 5px 10px; border-radius: 15px; cursor: pointer; }
+  #callArea { padding: 10px; background: #ced6e0; display: flex; gap: 10px; align-items: center; }
+  #localAudio, #remoteAudio { display: none; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h3>Мессенджер</h3>
+  <input id="usernameInput" placeholder="Имя пользователя" />
+  <input id="ngrokInput" placeholder="WebSocket URL (wss://...)" />
+  <div id="groups"></div>
+  <button id="connectBtn">Подключиться</button>
+  <div id="status" style="margin-top:10px; font-size: 12px; color: lightgray;"></div>
+</div>
+
+<div id="main">
+  <div id="chatHeader">Выберите группу</div>
+  <div id="messages"></div>
+  <div id="inputArea" style="display:none;">
+    <input id="messageInput" type="text" placeholder="Введите сообщение..." />
+    <button id="sendBtn">Отправить</button>
+  </div>
+  <div id="callArea" style="display:none;">
+    <button id="callBtn">Позвонить</button>
+    <button id="hangupBtn" disabled>Завершить звонок</button>
+    <audio id="localAudio" autoplay muted></audio>
+    <audio id="remoteAudio" autoplay></audio>
+  </div>
+</div>
+
+<script>
+(() => {
+  let ws = null;
+  let username = '';
+  let currentGroup = '';
+  let connected = false;
+
+  const usernameInput = document.getElementById('usernameInput');
+  const ngrokInput = document.getElementById('ngrokInput');
+  const connectBtn = document.getElementById('connectBtn');
+  const status = document.getElementById('status');
+  const groupsDiv = document.getElementById('groups');
+
+  const chatHeader = document.getElementById('chatHeader');
+  const messagesDiv = document.getElementById('messages');
+  const inputArea = document.getElementById('inputArea');
+  const messageInput = document.getElementById('messageInput');
+  const sendBtn = document.getElementById('sendBtn');
+
+  const callArea = document.getElementById('callArea');
+  const callBtn = document.getElementById('callBtn');
+  const hangupBtn = document.getElementById('hangupBtn');
+  const localAudio = document.getElementById('localAudio');
+  const remoteAudio = document.getElementById('remoteAudio');
+
+  // Список групп (можно добавить динамически)
+  const groups = ['Общий', 'Работа', 'Друзья'];
+
+  function showStatus(msg) {
+    status.textContent = msg;
+  }
+
+  function addGroupButtons() {
+    groupsDiv.innerHTML = '';
+    for (const g of groups) {
+      const btn = document.createElement('button');
+      btn.textContent = g;
+      btn.className = 'group-btn';
+      btn.onclick = () => switchGroup(g);
+      groupsDiv.appendChild(btn);
+    }
+  }
+
+  function switchGroup(group) {
+    if (!connected) return alert('Сначала подключитесь');
+    if (group === currentGroup) return;
+    currentGroup = group;
+    chatHeader.textContent = `Группа: ${group}`;
+    messagesDiv.innerHTML = '';
+    ws.send(JSON.stringify({ type: 'join', username, group }));
+    inputArea.style.display = 'flex';
+    callArea.style.display = 'flex';
+  }
+
+  function addMessage(usernameMsg, text, isYou, time) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + (isYou ? 'you' : 'other');
+    const timeStr = new Date(time).toLocaleTimeString();
+    div.textContent = `${usernameMsg}: ${text} (${timeStr})`;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+
+  function connect() {
+    username = usernameInput.value.trim();
+    const url = ngrokInput.value.trim();
+    if (!username) return alert('Введите имя пользователя');
+    if (!url) return alert('Введите URL WebSocket');
+
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+      connected = true;
+      showStatus('Подключено');
+      addGroupButtons();
+      inputArea.style.display = 'none';
+      callArea.style.display = 'none';
+    };
+    ws.onerror = (e) => {
+      showStatus('Ошибка подключения');
+      console.error(e);
+    };
+    ws.onclose = () => {
+      connected = false;
+      showStatus('Отключено');
+      inputArea.style.display = 'none';
+      callArea.style.display = 'none';
+      messagesDiv.innerHTML = '';
+      currentGroup = '';
+    };
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      switch(data.type) {
+        case 'history':
+          messagesDiv.innerHTML = '';
+          for (const msg of data.messages) {
+            addMessage(msg.username, msg.text, msg.username === username, msg.timestamp);
+          }
+          break;
+        case 'message':
+          addMessage(data.username, data.text, data.username === username, data.timestamp);
+          if (data.username !== username && Notification.permission === 'granted') {
+            new Notification(`Новое сообщение в ${currentGroup}`, { body: `${data.username}: ${data.text}` });
+          }
+          break;
+        case 'notification':
+          addMessage('Система', data.text, false, Date.now());
+          break;
+        case 'signal':
+          handleSignal(data);
+          break;
+      }
+    };
+  }
+
+  connectBtn.onclick = connect;
+
+  sendBtn.onclick = () => {
+    const text = messageInput.value.trim();
+    if (!text) return;
+    ws.send(JSON.stringify({ type: 'message', text }));
+    messageInput.value = '';
+  };
+
+  messageInput.onkeyup = (e) => {
+    if (e.key === 'Enter') sendBtn.click();
+  };
+
+  // WebRTC звонки
+  let localStream = null;
+  let peerConnection = null;
+  const config = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+  };
+
+  async function startCall() {
+    if (!currentGroup) return alert('Выберите группу');
+
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    localAudio.srcObject = localStream;
+    localAudio.style.display = 'block';
+
+    peerConnection = new RTCPeerConnection(config);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        ws.send(JSON.stringify({
+          type: 'signal',
+          to: currentGroup, // для упрощения — шлём группе, можно улучшить по пользователям
+          signalData: { candidate: event.candidate }
+        }));
+      }
+    };
+
+    peerConnection.ontrack = (event) => {
+      remoteAudio.srcObject = event.streams[0];
+      remoteAudio.style.display = 'block';
+    };
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    ws.send(JSON.stringify({
+      type: 'signal',
+      to: currentGroup,
+      signalData: { sdp: peerConnection.localDescription }
+    }));
+
+    callBtn.disabled = true;
+    hangupBtn.disabled = false;
+  }
+
+  async function handleSignal(data) {
+    if (!peerConnection) {
+      peerConnection = new RTCPeerConnection(config);
+      peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+          ws.send(JSON.stringify({
+            type: 'signal',
+            to: data.from,
+            signalData: { candidate: event.candidate }
+          }));
+        }
+      };
+      peerConnection.ontrack = (event) => {
+        remoteAudio.srcObject = event.streams[0];
+        remoteAudio.style.display = 'block';
+      };
+    }
+
+    if (data.signalData.sdp) {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signalData.sdp));
+      if (data.signalData.sdp.type === 'offer') {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        localAudio.srcObject = localStream;
+        localAudio.style.display = 'block';
+        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        ws.send(JSON.stringify({
+          type: 'signal',
+          to: data.from,
+          signalData: { sdp: peerConnection.localDescription }
+        }));
+      }
+    } else if (data.signalData.candidate) {
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signalData.candidate));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  }
+
+  function hangupCall() {
+    if (peerConnection) {
+      peerConnection.close();
+      peerConnection = null;
+    }
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      localStream = null;
+    }
+    localAudio.style.display = 'none';
+    remoteAudio.style.display = 'none';
+    callBtn.disabled = false;
+    hangupBtn.disabled = true;
+  }
+
+  callBtn.onclick = startCall;
+  hangupBtn.onclick = hangupCall;
+
+  // Запросить разрешение на уведомления
+  if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+    Notification.requestPermission();
+  }
+})();
+</script>
+
+</body>
+</html>
