@@ -1,11 +1,24 @@
-const WebSocket = require('ws');
+const express = require('express');
 const http = require('http');
+const WebSocket = require('ws');
+const path = require('path');
 
-const server = http.createServer();
+const app = express();
+const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-let clients = new Map(); // client => {username, group}
-let groups = new Map(); // groupName => Set of clients
+const PORT = process.env.PORT || 10000;
+
+// ======= Serve frontend if нужно =======
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (_, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ======= WebSocket Chat Logic =======
+let clients = new Map(); // ws => {username, group}
+let groups = new Map(); // groupName => Set<ws>
 let messages = new Map(); // groupName => [{username, text, timestamp}]
 
 function broadcast(group, data) {
@@ -20,28 +33,21 @@ function broadcast(group, data) {
 wss.on('connection', (ws) => {
   ws.isAlive = true;
 
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
+  ws.on('pong', () => { ws.isAlive = true });
 
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
       switch(data.type) {
         case 'join':
-          // data: { username, group }
           clients.set(ws, { username: data.username, group: data.group });
           if (!groups.has(data.group)) groups.set(data.group, new Set());
           groups.get(data.group).add(ws);
-
-          // Send chat history to this client
           ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
-
           broadcast(data.group, { type: 'notification', text: `${data.username} joined ${data.group}` });
           break;
 
         case 'message':
-          // data: { text }
           const sender = clients.get(ws);
           if (!sender) return;
           const msgObj = { username: sender.username, text: data.text, timestamp: Date.now() };
@@ -51,21 +57,20 @@ wss.on('connection', (ws) => {
           break;
 
         case 'signal':
-          // data: { to: username, signalData }
-          // Forward signal data for WebRTC to a specific user
           for (const [client, info] of clients.entries()) {
             if (info.username === data.to) {
-              client.send(JSON.stringify({ type: 'signal', from: clients.get(ws).username, signalData: data.signalData }));
+              client.send(JSON.stringify({
+                type: 'signal',
+                from: clients.get(ws).username,
+                signalData: data.signalData
+              }));
               break;
             }
           }
           break;
-
-        default:
-          break;
       }
-    } catch(e) {
-      console.error('Invalid message', e);
+    } catch (e) {
+      console.error("Ошибка парсинга", e);
     }
   });
 
@@ -82,16 +87,16 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Ping clients to detect dead connections
+// Пинги для проверки активности соединений
 setInterval(() => {
-  wss.clients.forEach(ws => {
+  wss.clients.forEach((ws) => {
     if (!ws.isAlive) return ws.terminate();
     ws.isAlive = false;
     ws.ping();
   });
 }, 30000);
 
-const PORT = process.env.PORT || 10000;
+// ======= Start Server =======
 server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
