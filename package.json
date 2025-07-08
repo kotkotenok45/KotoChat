@@ -1,6 +1,6 @@
 "scripts": {
   "dist": "electron-builder"
-  "start": "node ws_server.js"
+  "start": "node server.js"
 },
 "build": {
   "appId": "com.kotkotenok.kotochat",
