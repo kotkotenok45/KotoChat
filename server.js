@@ -18,7 +18,7 @@ const groups = new Map(); // groupName => Set(ws)
 const messages = new Map(); // groupName => [{username, text, timestamp, role}]
 
 const userRoles = {
-  'creator@example.com': 'Создатель',
+  'kotkotenok43434343@gmail.com': 'Создатель',
   'admin@example.com': 'Админ',
   'guest@example.com': 'Гость',
   // добавь своих пользователей сюда
