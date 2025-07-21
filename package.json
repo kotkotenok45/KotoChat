@@ -1,29 +1,13 @@
 {
-  "name": "kotochat-ws",
+  "name": "kotochat",
   "version": "1.0.0",
-  "description": "",
   "main": "server.js",
   "scripts": {
-    "dist": "electron-builder",
     "start": "node server.js"
   },
-  "build": {
-    "appId": "com.kotkotenok.kotochat",
-    "productName": "KotoChat",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "**/*"
-    ],
-    "win": {
-      "target": "nsis"
-    }
-  },
   "dependencies": {
-    "express": "^4.18.2",
-    "ws": "^8.13.0"
-  },
-  "author": "",
-  "license": "ISC"
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.9",
+    "cookie-parser": "^1.4.6"
+  }
 }
