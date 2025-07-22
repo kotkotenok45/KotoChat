@@ -1,75 +1,112 @@
-const express=require('express'),http=require('http'),WebSocket=require('ws');
-const app=express(),server=http.createServer(app),wss=new WebSocket.Server({server});
-app.use(express.static('public'));
+const http = require('http');
+const express = require('express');
+const WebSocket = require('ws');
+const path = require('path');
 
-let usersDB={
-  "kotkotenok43434343@gmail.com":{pass:"kotkotenok43",role:"Создатель"},
-  "admin@foo":{pass:"admin",role:"Админ"}
+const app = express();
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+const clients = new Map(); // ws => {username, userId, role}
+const groups = new Map(); // groupName => Set(ws)
+const messages = new Map(); // groupName => [{username, text, timestamp, role}]
+
+const userRoles = {
+  'creator@example.com': 'Создатель',
+  'admin@example.com': 'Админ',
+  'guest@example.com': 'Гость',
+  // добавь своих пользователей сюда
 };
-let sockets=new Map(), groups=new Map(); // group -> Set(ws)
-let history=new Map(); // group -> [messages]
 
-wss.on('connection',ws=>{
-  ws.on('message',msg=>{
-    let d=JSON.parse(msg);
-    if(d.type==='auth'){
-      let rec = usersDB[d.email];
-      if(!rec||rec.pass!==d.pass){
-        ws.send(JSON.stringify({type:'auth_fail'})); return ws.close();
+function broadcast(group, data) {
+  if (!groups.has(group)) return;
+  for (const client of groups.get(group)) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  }
+}
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  ws.on('message', (msg) => {
+    try {
+      const data = JSON.parse(msg);
+      switch(data.type) {
+        case 'join': {
+          const role = userRoles[data.userId.toLowerCase()] || 'Пользователь';
+          clients.set(ws, { username: data.username, userId: data.userId, role, group: 'Общий' });
+          if (!groups.has('Общий')) groups.set('Общий', new Set());
+          groups.get('Общий').add(ws);
+
+          // Отправляем историю
+          ws.send(JSON.stringify({ type: 'history', messages: messages.get('Общий') || [] }));
+
+          broadcast('Общий', { type: 'notification', text: ${data.username} (${role}) присоединился к Общий });
+          break;
+        }
+        case 'message': {
+          const sender = clients.get(ws);
+          if (!sender) return;
+          if (sender.role === 'Гость') {
+            ws.send(JSON.stringify({ type: 'notification', text: 'У вас нет прав писать сообщения' }));
+            return;
+          }
+          const msgObj = { username: sender.username, text: data.text, timestamp: Date.now(), role: sender.role };
+          if (!messages.has(sender.group)) messages.set(sender.group, []);
+          messages.get(sender.group).push(msgObj);
+
+          broadcast(sender.group, { type: 'message', ...msgObj });
+          break;
+        }
+        case 'signal': {
+          // Пересылаем WebRTC сигналы всем в группе кроме отправителя
+          const sender = clients.get(ws);
+          if (!sender) return;
+          if (!groups.has(sender.group)) return;
+          for (const client of groups.get(sender.group)) {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: 'signal', from: sender.username, signalData: data.signalData }));
+            }
+          }
+          break;
+        }
       }
-      ws.user={email:d.email,username:d.username,role:rec.role||"Пользователь"};
-      sockets.set(ws,ws.user);
-      if(!groups.has('Общий')) groups.set('Общий',new Set());
-      let mem = Array.from(groups.get('Общий'));
-      let memEmails=mem.map(s=>sockets.get(s).email);
-      groups.get('Общий').add(ws);
-      history.has('Общий')||history.set('Общий',[]);
-      ws.send(JSON.stringify({type:'auth_ok',user:ws.user,groups:Array.from(groups.keys()),members:memEmails}));
+    } catch (e) {
+      console.error('Invalid message', e);
     }
-    if(d.type==='create'){
-      if(!groups.has(d.group)){groups.set(d.group,new Set()); history.set(d.group,[]);}
-      broadcastGroups();
-    }
-    if(d.type==='join_group'){
-      if(!groups.has(d.group)) return;
-      groups.get(d.group).add(ws);
-      let mems=Array.from(groups.get(d.group)).map(s=>sockets.get(s).email);
-      ws.send(JSON.stringify({type:'joined',group:d.group,history:history.get(d.group),members:mems}));
-    }
-    if(d.type==='message'){
-      let m={type:'message',group:d.group,from:ws.user.username,role:ws.user.role,text:d.text};
-      history.get(d.group).push(m);
-      groups.get(d.group).forEach(s=>s.send(JSON.stringify(m)));
-    }
-    if(d.type==='add_member'&& (ws.user.role==='Создатель'||ws.user.role==='Админ')){
-      let g=groups.get(d.group);
-      for(let [s,u] of sockets) if(u.email===d.email){g.add(s);ws.send(JSON.stringify({type:'member_added',members:Array.from(g).map(s2=>sockets.get(s2).email)}));}
-    }
-    if(d.type==='remove_member'&& (ws.user.role==='Создатель'||ws.user.role==='Админ')){
-      let g=groups.get(d.group);
-      for(let [s,u] of sockets) if(u.email===d.email){g.delete(s);ws.send(JSON.stringify({type:'member_removed',members:Array.from(g).map(s2=>sockets.get(s2).email)}));}
-    }
-    if(d.type==='save_name'){
-      ws.user.username=d.username;
-      ws.send(JSON.stringify({type:'name_saved'}));
-    }
-    if(d.type==='signal'){
-      groups.get(d.group).forEach(s=>{
-        if(s!==ws) s.send(JSON.stringify({type:'signal',from:ws.user.username,...d}));
-      });
+  });
+
+  ws.on('close', () => {
+    const info = clients.get(ws);
+    if (info) {
+      clients.delete(ws);
+      if (groups.has(info.group)) {
+        groups.get(info.group).delete(ws);
+        broadcast(info.group, { type: 'notification', text: ${info.username} (${info.role}) покинул чат });
+      }
     }
   });
 });
 
-function broadcastGroups(){
-  let g=Array.from(groups.keys());
-  sockets.forEach((u,ws)=>{
-    ws.send(JSON.stringify({type:'groups',groups:g}));
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
   });
-}
+}, 30000);
 
-setInterval(()=>{
-  wss.clients.forEach(ws=>ws.isAlive?ws.isAlive=false:ws.terminate());
-},30000);
-
-server.listen(10000,()=>console.log('Server on :10000'));
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(Server running on port ${PORT});
+});
