@@ -10,7 +10,7 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 const userRoles = {
-  'kotkotenok43434343@yandex.ru': { role: 'Создатель', password: 'fjmbcssgznvqqild' },
+  'kotkotenok43434343@gmail.com': { role: 'Создатель', password: 'kotkotenok43' },
   'admin@example.com': { role: 'Админ', password: 'admin123' },
   'guest@example.com': { role: 'Гость', password: '' }
 };
