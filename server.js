@@ -1,113 +1,144 @@
-const express = require('express');
 const http = require('http');
+const express = require('express');
 const WebSocket = require('ws');
+const path = require('path');
 const nodemailer = require('nodemailer');
+const { v4: uuidv4 } = require('uuid'); // Для генерации токена подтверждения
+
 const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-const otpStore = new Map();
 
-// Хранилище ролей
-const userRoles = {
-  'admin@example.com': 'admin',
-  'creator@example.com': 'creator',
-};
+let clients = new Map(); // ws => {username, group, role}
+let groups = new Map(); // groupName => Set(ws)
+let messages = new Map(); // groupName => [{username, text, timestamp}]
+let pendingVerifications = new Map(); // email => {code, timestamp}
+let verifiedEmails = new Set(); // список подтверждённых email-ов
 
-// Email конфиг
+// === SMTP ===
 const transporter = nodemailer.createTransport({
-  host: 'smtp.yandex.ru',
-  port: 465,
-  secure: true,
+  service: 'Yandex',
   auth: {
     user: 'kotkotenok43434343@yandex.ru',
-    pass: 'fjmbcssgznvqqild',
-  },
+    pass: 'fjmbcssgznvqqild'
+  }
 });
 
-// Генерация кода подтверждения
-function generateOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+// === Отправка кода на email ===
+app.post('/verify', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email is required' });
+
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  pendingVerifications.set(email, { code, timestamp: Date.now() });
+
+  try {
+    await transporter.sendMail({
+      from: '"KotoChat" <kotkotenok43434343@yandex.ru>',
+      to: email,
+      subject: 'Код подтверждения',
+      text: `Ваш код подтверждения: ${code}`
+    });
+    res.json({ message: 'Код отправлен на email' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Ошибка отправки письма' });
+  }
+});
+
+// === Проверка кода ===
+app.post('/verify-code', (req, res) => {
+  const { email, code } = req.body;
+  const entry = pendingVerifications.get(email);
+
+  if (entry && entry.code === code) {
+    verifiedEmails.add(email);
+    pendingVerifications.delete(email);
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ success: false, message: 'Неверный код' });
+  }
+});
+
+// === WS Chat ===
+function broadcast(group, data) {
+  if (!groups.has(group)) return;
+  for (const client of groups.get(group)) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(data));
+    }
+  }
 }
 
-wss.on('connection', ws => {
-  ws.on('message', message => {
-    let data;
-    try { data = JSON.parse(message); } catch { return; }
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
 
-    // Запрос кода
-    if (data.type === 'request_otp') {
-      const email = data.userId;
-      const code = generateOtp();
-      otpStore.set(email, code);
-      transporter.sendMail({
-        from: '"KotoChat" <kotkotenok43434343@yandex.ru>',
-        to: email,
-        subject: 'Код подтверждения',
-        text: `Ваш код: ${code}`,
-      }).then(() => {
-        ws.send(JSON.stringify({ type: 'otp_sent' }));
-      }).catch(err => {
-        ws.send(JSON.stringify({ type: 'otp_failed', error: err.message }));
-      });
-      return;
-    }
+  ws.on('pong', () => { ws.isAlive = true; });
 
-    // Проверка кода
-    if (data.type === 'verify_otp') {
-      const saved = otpStore.get(data.userId);
-      const success = saved && data.code === saved;
-      if (success) otpStore.delete(data.userId);
-      ws.send(JSON.stringify({ type: 'otp_verified', success }));
-      return;
-    }
+  ws.on('message', (msg) => {
+    try {
+      const data = JSON.parse(msg);
 
-    // Подключение к чату
-    if (data.type === 'join') {
-      const role = userRoles[data.userId] || 'guest';
-      ws.username = data.username;
-      ws.userId = data.userId;
-      ws.role = role;
+      switch (data.type) {
+        case 'join':
+          clients.set(ws, { username: data.username, group: data.group, role: data.role || 'Гость' });
+          if (!groups.has(data.group)) groups.set(data.group, new Set());
+          groups.get(data.group).add(ws);
 
-      ws.send(JSON.stringify({ type: 'role', role }));
+          ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
+          broadcast(data.group, { type: 'notification', text: `${data.username} вошёл в ${data.group}` });
+          break;
 
-      broadcast({
-        type: 'system',
-        message: `${ws.username} вошёл в чат как ${role}`,
-      });
-      return;
-    }
+        case 'message':
+          const sender = clients.get(ws);
+          if (!sender) return;
 
-    // Сообщение
-    if (data.type === 'message') {
-      broadcast({
-        type: 'message',
-        user: ws.username,
-        text: data.text,
-        role: ws.role,
-      });
+          const msgObj = { username: sender.username, text: data.text, timestamp: Date.now() };
+          if (!messages.has(sender.group)) messages.set(sender.group, []);
+          messages.get(sender.group).push(msgObj);
+
+          broadcast(sender.group, { type: 'message', ...msgObj });
+          break;
+
+        case 'signal':
+          for (const [client, info] of clients.entries()) {
+            if (info.username === data.to) {
+              client.send(JSON.stringify({ type: 'signal', from: clients.get(ws).username, signalData: data.signalData }));
+              break;
+            }
+          }
+          break;
+      }
+    } catch (err) {
+      console.error('Ошибка обработки сообщения:', err);
     }
   });
 
   ws.on('close', () => {
-    if (ws.username) {
-      broadcast({
-        type: 'system',
-        message: `${ws.username} вышел из чата`,
-      });
+    const info = clients.get(ws);
+    if (info) {
+      const { username, group } = info;
+      clients.delete(ws);
+      if (groups.has(group)) {
+        groups.get(group).delete(ws);
+        broadcast(group, { type: 'notification', text: `${username} вышел из ${group}` });
+      }
     }
   });
 });
 
-function broadcast(data) {
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
   });
-}
+}, 30000);
 
-app.use(express.static('public'));
-
-server.listen(3000, () => {
-  console.log('Сервер запущен на http://localhost:3000');
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
