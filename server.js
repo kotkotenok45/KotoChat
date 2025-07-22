@@ -18,7 +18,7 @@ const groups = new Map(); // groupName => Set(ws)
 const messages = new Map(); // groupName => [{username, text, timestamp, role}]
 
 const userRoles = {
-  'creator@example.com': 'Создатель',
+  'kotkotenok43434343@gmail.com': 'Создатель',
   'admin@example.com': 'Админ',
   'guest@example.com': 'Гость',
   // добавь своих пользователей сюда
@@ -51,7 +51,7 @@ wss.on('connection', (ws) => {
           // Отправляем историю
           ws.send(JSON.stringify({ type: 'history', messages: messages.get('Общий') || [] }));
 
-          broadcast('Общий', { type: 'notification', text: ${data.username} (${role}) присоединился к Общий });
+          broadcast('Общий', { type: 'notification', text: `${data.username} (${role}) присоединился к Общий` });
           break;
         }
         case 'message': {
@@ -92,7 +92,7 @@ wss.on('connection', (ws) => {
       clients.delete(ws);
       if (groups.has(info.group)) {
         groups.get(info.group).delete(ws);
-        broadcast(info.group, { type: 'notification', text: ${info.username} (${info.role}) покинул чат });
+        broadcast(info.group, { type: 'notification', text: `${info.username} (${info.role}) покинул чат` });
       }
     }
   });
@@ -108,5 +108,5 @@ setInterval(() => {
 
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log(Server running on port ${PORT});
+  console.log(`Server running on port ${PORT}`);
 });
