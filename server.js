@@ -1,132 +1,66 @@
-const http = require('http');
 const express = require('express');
+const http = require('http');
 const WebSocket = require('ws');
-const path = require('path');
-const nodemailer = require('nodemailer');
-const bodyParser = require('body-parser');
 
 const app = express();
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(bodyParser.json());
-
-const transporter = nodemailer.createTransport({
-  service: 'Yandex',
-  auth: {
-    user: 'kotkotenok43434343@yandex.ru',
-    pass: 'fjmbcssgznvqqild',
-  }
-});
-
-const emailCodes = new Map(); // email => код
-const verifiedEmails = new Set(); // подтверждённые email
-
-app.post('/send-code', (req, res) => {
-  const { email } = req.body;
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  emailCodes.set(email, code);
-
-  transporter.sendMail({
-    from: 'kotkotenok43434343@yandex.ru',
-    to: email,
-    subject: 'Код подтверждения',
-    text: `Ваш код подтверждения: ${code}`
-  }, (err, info) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send('Ошибка при отправке кода');
-    }
-    res.send('Код отправлен');
-  });
-});
-
-app.post('/verify-code', (req, res) => {
-  const { email, code } = req.body;
-  if (emailCodes.get(email) === code) {
-    verifiedEmails.add(email);
-    res.send('OK');
-  } else {
-    res.status(400).send('Неверный код');
-  }
-});
-
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-let clients = new Map(); // ws => {username, group, role}
-let groups = new Map(); // groupName => Set(ws)
-let messages = new Map(); // groupName => [{username, text, timestamp}]
+const userRoles = {
+  'kotkotenok43434343@yandex.ru': { role: 'Создатель', password: 'creatorpass' },
+  'admin@example.com': { role: 'Админ', password: 'admin123' },
+  'guest@example.com': { role: 'Гость', password: '' }
+};
 
-function broadcast(group, data) {
-  if (!groups.has(group)) return;
-  for (const client of groups.get(group)) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  }
-}
+const clients = new Map();
 
 wss.on('connection', (ws) => {
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
-
-  ws.on('message', (msg) => {
+  ws.on('message', (message) => {
     try {
-      const data = JSON.parse(msg);
-      switch (data.type) {
-        case 'join':
-          const role = data.username === 'kotkotenok' ? 'Создатель' : (data.username === 'admin' ? 'Админ' : 'Гость');
-          clients.set(ws, { username: data.username, group: data.group, role });
-          if (!groups.has(data.group)) groups.set(data.group, new Set());
-          groups.get(data.group).add(ws);
-          ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
-          broadcast(data.group, { type: 'notification', text: `${data.username} (${role}) вошёл в ${data.group}` });
-          break;
+      const data = JSON.parse(message);
+      if (data.type === 'join') {
+        const userData = userRoles[data.userId.toLowerCase()];
+        let role = 'Пользователь';
 
-        case 'message':
-          const sender = clients.get(ws);
-          if (!sender) return;
-          const msgObj = { username: sender.username, text: data.text, timestamp: Date.now(), role: sender.role };
-          if (!messages.has(sender.group)) messages.set(sender.group, []);
-          messages.get(sender.group).push(msgObj);
-          broadcast(sender.group, { type: 'message', ...msgObj });
-          break;
-
-        case 'signal':
-          for (const [client, info] of clients.entries()) {
-            if (info.username === data.to) {
-              client.send(JSON.stringify({ type: 'signal', from: clients.get(ws).username, signalData: data.signalData }));
-              break;
-            }
+        if (userData) {
+          if (userData.password && data.password !== userData.password) {
+            ws.send(JSON.stringify({ type: 'notification', text: '❌ Неверный пароль' }));
+            ws.close();
+            return;
           }
-          break;
+          role = userData.role;
+        }
+
+        ws.username = data.username;
+        ws.role = role;
+        clients.set(ws, data.username);
+
+        broadcast({ type: 'notification', text: `🔔 ${data.username} (${role}) вошёл в чат` });
+      }
+
+      if (data.type === 'message') {
+        broadcast({ type: 'message', username: ws.username, text: data.text, role: ws.role });
       }
     } catch (e) {
-      console.error('Ошибка сообщения', e);
+      console.error("Ошибка:", e.message);
     }
   });
 
   ws.on('close', () => {
-    const info = clients.get(ws);
-    if (info) {
-      const { username, group } = info;
+    if (ws.username) {
+      broadcast({ type: 'notification', text: `🚪 ${ws.username} вышел` });
       clients.delete(ws);
-      if (groups.has(group)) {
-        groups.get(group).delete(ws);
-        broadcast(group, { type: 'notification', text: `${username} вышел из ${group}` });
-      }
     }
   });
 });
 
-setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
+function broadcast(data) {
+  const json = JSON.stringify(data);
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) client.send(json);
+  }
+}
 
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(10000, () => {
+  console.log('Сервер работает на порту 10000');
 });
