@@ -1,40 +1,92 @@
-// server.js — KotoChat Server (Render-ready, HTTPS/WSS)
-// deps: express, ws, bcryptjs, nanoid, cors
 import express from "express";
-import http from "http";
-import { WebSocketServer } from "ws";
 import cors from "cors";
-import bcrypt from "bcryptjs";
-import { nanoid } from "nanoid";
+import bodyParser from "body-parser";
 
 const app = express();
-app.set("trust proxy", 1);
+app.use(cors());
+app.use(bodyParser.json());
 
-// Разрешаем только твой домен
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://kotochat-e22r.onrender.com";
-app.use(cors({ origin: ALLOWED_ORIGIN }));
-app.use(express.json({ limit: "1mb" }));
+// Структуры данных
+const users = {}; 
+const groups = {}; 
 
-// Память вместо БД (для простоты демонстрации)
-const users = new Map();    // username -> {id, username, hash, role}
-const sessions = new Map(); // token -> { username, role }
-const inbox = new Map();    // username -> [msgs]
-const online = new Map();   // username -> ws
+// Роли: Гость, Пользователь, Админ, Создатель
 
-const Roles = { USER: "user", OWNER: "owner" };
-
-// bootstrap создателя
-(function () {
-  const username = "creator";
-  const password = "creator";
-  if (!users.has(username)) {
-    const hash = bcrypt.hashSync(password, 12);
-    users.set(username, { id: nanoid(), username, hash, role: Roles.OWNER });
-    inbox.set(username, []);
-    console.log("Создан владелец:", username, "/", password);
+// Создать пользователя или вернуть существующего
+function ensureUser(username, password) {
+  if (!users[username]) {
+    users[username] = { password, role: "Пользователь", chats: {}, groups: [] };
   }
-})();
+  return users[username];
+}
 
-// Регистрация
-app.post("/api/register", async (req, res) => {
-  const { username, password } = req.body || {};
+// Авторизация / регистрация
+app.post("/api/login", (req, res) => {
+  const { username, password } = req.body;
+  if (users[username]) {
+    if (users[username].password === password) return res.json({ ok: true });
+    else return res.status(400).json({ error: "Неверный пароль" });
+  } else {
+    // Создаем нового пользователя
+    ensureUser(username, password);
+    return res.json({ ok: true, message: "Новый аккаунт создан" });
+  }
+});
+
+// Отправка личного сообщения
+app.post("/api/send", (req, res) => {
+  const { from, to, text } = req.body;
+  if (!users[from]) return res.status(400).json({ error: "Отправитель не существует" });
+  ensureUser(to, ""); // создаём если нет
+  if (!users[to].chats[from]) users[to].chats[from] = [];
+  users[to].chats[from].push({ from, text, ts: Date.now() });
+  return res.json({ ok: true });
+});
+
+// Получение сообщений
+app.get("/api/messages/:username", (req, res) => {
+  const { username } = req.params;
+  ensureUser(username, "");
+  const allMsgs = [];
+  for (const chatWith in users[username].chats) {
+    allMsgs.push(...users[username].chats[chatWith]);
+    users[username].chats[chatWith] = []; // очищаем после выдачи
+  }
+  res.json(allMsgs);
+});
+
+// Создание группы
+app.post("/api/creategroup", (req, res) => {
+  const { creator, name } = req.body;
+  if (!users[creator]) return res.status(400).json({ error: "Пользователь не найден" });
+  if (groups[name]) return res.status(400).json({ error: "Группа уже существует" });
+  groups[name] = { creator, members: { [creator]: "Создатель" }, messages: [] };
+  users[creator].groups.push(name);
+  res.json({ ok: true });
+});
+
+// Добавление пользователя в группу
+app.post("/api/addtogroup", (req, res) => {
+  const { group, user, by } = req.body;
+  if (!groups[group]) return res.status(400).json({ error: "Группа не найдена" });
+  if (!users[by] || groups[group].members[by] === undefined) return res.status(400).json({ error: "Нет прав" });
+  groups[group].members[user] = "Участник";
+  if (!users[user].groups.includes(group)) users[user].groups.push(group);
+  res.json({ ok: true });
+});
+
+// Изменение роли
+app.post("/api/changerole", (req, res) => {
+  const { group, user, role, by } = req.body;
+  if (!groups[group]) return res.status(400).json({ error: "Группа не найдена" });
+  if (groups[group].members[by] !== "Создатель" && groups[group].members[by] !== "Модератор")
+    return res.status(400).json({ error: "Нет прав" });
+  if (!groups[group].members[user]) return res.status(400).json({ error: "Пользователь не в группе" });
+  groups[group].members[user] = role;
+  res.json({ ok: true });
+});
+
+app.get("/healthz", (_, res) => res.json({ ok: true }));
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log("KotoChat HTTPS Server running on", PORT));
