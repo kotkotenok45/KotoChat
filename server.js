@@ -1,112 +1,115 @@
-const http = require('http');
-const express = require('express');
-const WebSocket = require('ws');
-const path = require('path');
+// server.js — KotoChat Server (Render-ready, HTTPS domain)
+import express from "express";
+import cors from "cors";
+import { WebSocketServer } from "ws";
+import bcrypt from "bcryptjs";
+import { nanoid } from "nanoid";
+import http from "http";
 
 const app = express();
+app.set("trust proxy", 1);
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+const ALLOWED_ORIGIN =
+  process.env.ALLOWED_ORIGIN || "https://kotochat-e22r.onrender.com";
+
+app.use(cors({ origin: ALLOWED_ORIGIN }));
+app.use(express.json({ limit: "1mb" }));
+
+// Хранилища (память, лучше потом БД)
+const users = new Map();
+const sessions = new Map();
+const inbox = new Map();
+
+const Roles = { USER: "user", OWNER: "owner" };
+
+// bootstrap владельца
+(function () {
+  const username = "creator";
+  const password = "creator";
+  if (!users.has(username)) {
+    const hash = bcrypt.hashSync(password, 12);
+    users.set(username, { id: nanoid(), username, hash, role: Roles.OWNER });
+    inbox.set(username, []);
+    console.log("Создан владелец:", username, "/", password);
+  }
+})();
+
+// регистрация
+app.post("/api/register", async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password)
+    return res.status(400).json({ error: "missing" });
+  if (users.has(username)) return res.status(409).json({ error: "taken" });
+  const hash = await bcrypt.hash(password, 12);
+  users.set(username, { id: nanoid(), username, hash, role: Roles.USER });
+  inbox.set(username, []);
+  res.json({ ok: true });
 });
 
+// логин
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body || {};
+  const user = users.get(username);
+  if (!user) return res.status(401).json({ error: "bad_credentials" });
+  const ok = await bcrypt.compare(password, user.hash);
+  if (!ok) return res.status(401).json({ error: "bad_credentials" });
+  const token = nanoid(64);
+  sessions.set(token, { username, role: user.role });
+  res.json({ token, username, role: user.role });
+});
+
+app.get("/healthz", (_, res) => res.json({ ok: true }));
+
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocketServer({ server });
 
-const clients = new Map(); // ws => {username, userId, role}
-const groups = new Map(); // groupName => Set(ws)
-const messages = new Map(); // groupName => [{username, text, timestamp, role}]
-
-const userRoles = {
-  'kotkotenok43434343@gmail.com': 'Создатель',
-  'admin@example.com': 'Админ',
-  'guest@example.com': 'Гость',
-  // добавь своих пользователей сюда
-};
-
-function broadcast(group, data) {
-  if (!groups.has(group)) return;
-  for (const client of groups.get(group)) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
+function authFromQuery(url) {
+  try {
+    const q = new URL(url, "http://x");
+    return sessions.get(q.searchParams.get("token"));
+  } catch {
+    return null;
   }
 }
 
-wss.on('connection', (ws) => {
-  ws.isAlive = true;
+function wsSend(ws, msg) {
+  try {
+    ws.send(JSON.stringify(msg));
+  } catch {}
+}
 
-  ws.on('pong', () => { ws.isAlive = true; });
+const online = new Map();
 
-  ws.on('message', (msg) => {
+wss.on("connection", (ws, req) => {
+  const sess = authFromQuery(req.url);
+  if (!sess) return ws.close(4001, "unauthorized");
+  online.set(sess.username, ws);
+  wsSend(ws, { type: "hello", user: sess.username });
+
+  ws.on("message", (raw) => {
+    let data;
     try {
-      const data = JSON.parse(msg);
-      switch(data.type) {
-        case 'join': {
-          const role = userRoles[data.userId.toLowerCase()] || 'Пользователь';
-          clients.set(ws, { username: data.username, userId: data.userId, role, group: 'Общий' });
-          if (!groups.has('Общий')) groups.set('Общий', new Set());
-          groups.get('Общий').add(ws);
-
-          // Отправляем историю
-          ws.send(JSON.stringify({ type: 'history', messages: messages.get('Общий') || [] }));
-
-          broadcast('Общий', { type: 'notification', text: `${data.username} (${role}) присоединился к Общий` });
-          break;
-        }
-        case 'message': {
-          const sender = clients.get(ws);
-          if (!sender) return;
-          if (sender.role === 'Гость') {
-            ws.send(JSON.stringify({ type: 'notification', text: 'У вас нет прав писать сообщения' }));
-            return;
-          }
-          const msgObj = { username: sender.username, text: data.text, timestamp: Date.now(), role: sender.role };
-          if (!messages.has(sender.group)) messages.set(sender.group, []);
-          messages.get(sender.group).push(msgObj);
-
-          broadcast(sender.group, { type: 'message', ...msgObj });
-          break;
-        }
-        case 'signal': {
-          // Пересылаем WebRTC сигналы всем в группе кроме отправителя
-          const sender = clients.get(ws);
-          if (!sender) return;
-          if (!groups.has(sender.group)) return;
-          for (const client of groups.get(sender.group)) {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(JSON.stringify({ type: 'signal', from: sender.username, signalData: data.signalData }));
-            }
-          }
-          break;
-        }
-      }
-    } catch (e) {
-      console.error('Invalid message', e);
+      data = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (data.type === "send") {
+      const msg = {
+        id: nanoid(),
+        from: sess.username,
+        to: data.to,
+        text: data.text,
+        ts: Date.now(),
+      };
+      const target = online.get(data.to);
+      if (target) wsSend(target, { type: "message", payload: msg });
+      else (inbox.get(data.to) || []).push(msg);
+      wsSend(ws, { type: "ack", id: msg.id });
     }
   });
 
-  ws.on('close', () => {
-    const info = clients.get(ws);
-    if (info) {
-      clients.delete(ws);
-      if (groups.has(info.group)) {
-        groups.get(info.group).delete(ws);
-        broadcast(info.group, { type: 'notification', text: `${info.username} (${info.role}) покинул чат` });
-      }
-    }
-  });
+  ws.on("close", () => online.delete(sess.username));
 });
 
-setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log("Server on " + PORT));
