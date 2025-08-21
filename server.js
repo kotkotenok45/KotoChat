@@ -1,66 +1,40 @@
+// server.js — KotoChat Server (Render-ready, HTTPS/WSS)
+// deps: express, ws, bcryptjs, nanoid, cors
 import express from "express";
 import http from "http";
 import { WebSocketServer } from "ws";
 import cors from "cors";
-import bodyParser from "body-parser";
+import bcrypt from "bcryptjs";
+import { nanoid } from "nanoid";
 
 const app = express();
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+app.set("trust proxy", 1);
 
-app.use(cors());
-app.use(bodyParser.json());
+// Разрешаем только твой домен
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://kotochat-e22r.onrender.com";
+app.use(cors({ origin: ALLOWED_ORIGIN }));
+app.use(express.json({ limit: "1mb" }));
 
-const users = {};   // username -> password
-const tokens = {};  // token -> username
-const sockets = {}; // username -> ws
+// Память вместо БД (для простоты демонстрации)
+const users = new Map();    // username -> {id, username, hash, role}
+const sessions = new Map(); // token -> { username, role }
+const inbox = new Map();    // username -> [msgs]
+const online = new Map();   // username -> ws
 
-function makeToken() {
-  return Math.random().toString(36).slice(2);
-}
+const Roles = { USER: "user", OWNER: "owner" };
 
-// Register
-app.post("/api/register", (req, res) => {
-  const { username, password } = req.body;
-  if (users[username]) return res.status(400).json({ error: "Exists" });
-  users[username] = password;
-  res.json({ ok: true });
-});
+// bootstrap создателя
+(function () {
+  const username = "creator";
+  const password = "creator";
+  if (!users.has(username)) {
+    const hash = bcrypt.hashSync(password, 12);
+    users.set(username, { id: nanoid(), username, hash, role: Roles.OWNER });
+    inbox.set(username, []);
+    console.log("Создан владелец:", username, "/", password);
+  }
+})();
 
-// Login
-app.post("/api/login", (req, res) => {
-  const { username, password } = req.body;
-  if (users[username] !== password) return res.status(400).json({ error: "Invalid" });
-  const token = makeToken();
-  tokens[token] = username;
-  res.json({ token });
-});
-
-// WebSocket
-wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, "http://x");
-  const token = url.searchParams.get("token");
-  const username = tokens[token];
-  if (!username) return ws.close();
-
-  sockets[username] = ws;
-
-  ws.on("message", (msg) => {
-    const data = JSON.parse(msg);
-    if (data.type === "send") {
-      const to = sockets[data.to];
-      if (to) {
-        to.send(JSON.stringify({ type: "message", payload: { from: username, text: data.text } }));
-      }
-    }
-  });
-
-  ws.on("close", () => {
-    delete sockets[username];
-  });
-});
-
-app.get("/healthz", (_, res) => res.json({ ok: true }));
-
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => console.log("KotoChat Server running on", PORT));
+// Регистрация
+app.post("/api/register", async (req, res) => {
+  const { username, password } = req.body || {};
