@@ -1,68 +1,97 @@
-// server.js
-const express = require('express');
-const http = require('http');
 const WebSocket = require('ws');
-const cors = require('cors');
+const http = require('http');
 
-const app = express();
-const server = http.createServer(app);
+const server = http.createServer();
 const wss = new WebSocket.Server({ server });
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public')); // папка с index.html
+let clients = new Map(); // client => {username, group}
+let groups = new Map(); // groupName => Set of clients
+let messages = new Map(); // groupName => [{username, text, timestamp}]
 
-// Хранилище сообщений
-let messages = []; // {user: 'Имя', text: 'Сообщение', time: timestamp}
-
-// REST API для загрузки сообщений
-app.get('/messages/kotochat', (req, res) => {
-  res.json(messages);
-});
-
-// REST API для отправки сообщений
-app.post('/messages/kotochat', (req, res) => {
-  const { user, text } = req.body;
-  if (!user || !text) return res.status(400).json({ error: 'Нет user или text' });
-
-  const message = { user, text, time: Date.now() };
-  messages.push(message);
-
-  // Отправка через WebSocket всем подключённым клиентам
-  wss.clients.forEach(client => {
+function broadcast(group, data) {
+  if (!groups.has(group)) return;
+  for (const client of groups.get(group)) {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(message));
+      client.send(JSON.stringify(data));
+    }
+  }
+}
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
+
+  ws.on('message', (msg) => {
+    try {
+      const data = JSON.parse(msg);
+      switch(data.type) {
+        case 'join':
+          // data: { username, group }
+          clients.set(ws, { username: data.username, group: data.group });
+          if (!groups.has(data.group)) groups.set(data.group, new Set());
+          groups.get(data.group).add(ws);
+
+          // Send chat history to this client
+          ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
+
+          broadcast(data.group, { type: 'notification', text: `${data.username} joined ${data.group}` });
+          break;
+
+        case 'message':
+          // data: { text }
+          const sender = clients.get(ws);
+          if (!sender) return;
+          const msgObj = { username: sender.username, text: data.text, timestamp: Date.now() };
+          if (!messages.has(sender.group)) messages.set(sender.group, []);
+          messages.get(sender.group).push(msgObj);
+          broadcast(sender.group, { type: 'message', ...msgObj });
+          break;
+
+        case 'signal':
+          // data: { to: username, signalData }
+          // Forward signal data for WebRTC to a specific user
+          for (const [client, info] of clients.entries()) {
+            if (info.username === data.to) {
+              client.send(JSON.stringify({ type: 'signal', from: clients.get(ws).username, signalData: data.signalData }));
+              break;
+            }
+          }
+          break;
+
+        default:
+          break;
+      }
+    } catch(e) {
+      console.error('Invalid message', e);
     }
   });
 
-  res.json({ status: 'ok' });
-});
-
-// WebSocket для реального времени
-wss.on('connection', ws => {
-  console.log('Новый клиент подключился');
-
-  // Можно отправить текущие сообщения при подключении
-  ws.send(JSON.stringify({ type: 'init', messages }));
-
-  ws.on('message', msg => {
-    try {
-      const data = JSON.parse(msg);
-      if(data.user && data.text){
-        const message = { user: data.user, text: data.text, time: Date.now() };
-        messages.push(message);
-
-        wss.clients.forEach(client => {
-          if(client.readyState === WebSocket.OPEN){
-            client.send(JSON.stringify(message));
-          }
-        });
+  ws.on('close', () => {
+    const info = clients.get(ws);
+    if (info) {
+      const { username, group } = info;
+      clients.delete(ws);
+      if (groups.has(group)) {
+        groups.get(group).delete(ws);
+        broadcast(group, { type: 'notification', text: `${username} left ${group}` });
       }
-    } catch(e){ console.log(e); }
+    }
   });
-
-  ws.on('close', () => console.log('Клиент отключился'));
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Сервер запущен на порту ${PORT}`));
+// Ping clients to detect dead connections
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
