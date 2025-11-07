@@ -1,105 +1,91 @@
+const http = require('http');
 const WebSocket = require('ws');
-const http = require('http');
 
-const server = http.createServer();
+// 1. Создаём HTTP-сервер (обязательно для wss:// на Render)
+const server = http.createServer((req, res) => {
+  // Опционально: отдать index.html, если захотите SPA
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(`
+      <!DOCTYPE html>
+      <html><head><meta charset="utf-8"><title>❌</title></head>
+      <body>
+        <h2>Это WebSocket-сервер ✅</h2>
+        <p>Подключайтесь через <code>wss://${req.headers.host}</code></p>
+        <p>Для чата откройте <a href="https://ваш-фронтенд.html">ваш HTML-файл</a></p>
+      </body></html>
+    `);
+  } else {
+    res.writeHead(404);
+    res.end('Not found');
+  }
+});
+
+// 2. Подключаем WebSocket к HTTP-серверу
 const wss = new WebSocket.Server({ server });
 
-let clients = new Map(); // client => { username, group }
-let groups = new Map();  // groupName => Set of clients
-let messages = new Map(); // groupName => [{ username, text, timestamp }]
+// 3. Хранение групп: { groupName: Set<WebSocket> }
+const groups = {
+  'Общий': new Set(),
+  'Работа': new Set(),
+  'Друзья': new Set()
+};
 
-function broadcast(group, data) {
-  if (!groups.has(group)) return;
-  for (const client of groups.get(group)) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
-    }
-  }
-}
-
+// 4. Обработка подключений
 wss.on('connection', (ws) => {
-  ws.isAlive = true;
+  let username = 'anon';
+  let currentGroup = null;
 
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
-
-  ws.on('message', (msg) => {
+  ws.on('message', (data) => {
     try {
-      const data = JSON.parse(msg);
-      const senderInfo = clients.get(ws);
+      const msg = JSON.parse(data);
+      
+      if (msg.type === 'join' && msg.username && groups[msg.group]) {
+        username = msg.username;
+        // Покинуть старую группу
+        if (currentGroup && groups[currentGroup].has(ws)) {
+          groups[currentGroup].delete(ws);
+        }
+        // Вступить в новую
+        currentGroup = msg.group;
+        groups[currentGroup].add(ws);
 
-      switch (data.type) {
-        case 'join':
-          // data: { username, group }
-          clients.set(ws, { username: data.username, group: data.group });
-          if (!groups.has(data.group)) groups.set(data.group, new Set());
-          groups.get(data.group).add(ws);
+        // Уведомление
+        broadcast(currentGroup, {
+          type: 'notification',
+          text: `${username} присоединился к группе`
+        });
 
-          // Send chat history to this client
-          ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
+      } else if (msg.type === 'message' && currentGroup && msg.text) {
+        broadcast(currentGroup, {
+          type: 'message',
+          username,
+          text: msg.text,
+          timestamp: Date.now()
+        });
 
-          broadcast(data.group, { 
-            type: 'notification', 
-            text: `${data.username} joined ${data.group}` 
-          });
-          break;
-
-        case 'message':
-          // data: { text }
-          if (!senderInfo) return;
-          const msgObj = { 
-            username: senderInfo.username, 
-            text: data.text, 
-            timestamp: Date.now() 
-          };
-          if (!messages.has(senderInfo.group)) messages.set(senderInfo.group, []);
-          const groupMessages = messages.get(senderInfo.group);
-          // Ограничим историю 100 сообщениями, чтобы не утечка памяти
-          if (groupMessages.length >= 100) groupMessages.shift();
-          groupMessages.push(msgObj);
-          broadcast(senderInfo.group, { type: 'message', ...msgObj });
-          break;
-
-        case 'signal':
-          // data: { to: "groupName", signalData: ... }
-          // В клиенте поле 'to' — это НАЗВАНИЕ ГРУППЫ, а не имя пользователя!
-          if (!senderInfo) return;
-
-          const targetGroup = data.to; // это группа
-          if (groups.has(targetGroup)) {
-            for (const client of groups.get(targetGroup)) {
-              // Не отправляем сигнал самому себе
-              if (client === ws) continue;
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                  type: 'signal',
-                  from: senderInfo.username, // кто прислал
-                  signalData: data.signalData
-                }));
-              }
-            }
-          }
-          break;
-
-        default:
-          break;
+      } else if (msg.type === 'signal' && msg.to && msg.signalData) {
+        // Простая рассылка сигнала ВСЕМ в группе (для упрощения)
+        // В production лучше использовать peer-to-peer или указывать получателя
+        broadcast(msg.to, {
+          type: 'signal',
+          from: username,
+          signalData: msg.signalData
+        });
       }
     } catch (e) {
-      console.error('Invalid message:', e);
+      console.error('Ошибка обработки сообщения:', e);
+      ws.send(JSON.stringify({ type: 'notification', text: '⚠️ Ошибка в сообщении' }));
     }
   });
 
   ws.on('close', () => {
-    const info = clients.get(ws);
-    if (info) {
-      const { username, group } = info;
-      clients.delete(ws);
-      if (groups.has(group)) {
-        groups.get(group).delete(ws);
-        broadcast(group, { 
-          type: 'notification', 
-          text: `${username} left ${group}` 
+    if (currentGroup && groups[currentGroup]) {
+      groups[currentGroup].delete(ws);
+      if (username !== 'anon') {
+        broadcast(currentGroup, {
+          type: 'notification',
+          text: `${username} покинул группу`
         });
       }
     }
@@ -110,146 +96,20 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Ping clients to detect dead connections
-setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) {
-      return ws.terminate();
-    }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
-  console.log(`🌐 WebSocket URL: ws://localhost:${PORT} (or wss://your-domain.onrender.com in production)`);
-});const WebSocket = require('ws');
-const http = require('http');
-
-const server = http.createServer();
-const wss = new WebSocket.Server({ server });
-
-let clients = new Map(); // client => { username, group }
-let groups = new Map();  // groupName => Set of clients
-let messages = new Map(); // groupName => [{ username, text, timestamp }]
-
-function broadcast(group, data) {
-  if (!groups.has(group)) return;
-  for (const client of groups.get(group)) {
+// Вспомогательная функция: рассылка в группу
+function broadcast(groupName, data) {
+  if (!groups[groupName]) return;
+  const message = JSON.stringify(data);
+  groups[groupName].forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
+      client.send(message);
     }
-  }
+  });
 }
 
-wss.on('connection', (ws) => {
-  ws.isAlive = true;
-
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
-
-  ws.on('message', (msg) => {
-    try {
-      const data = JSON.parse(msg);
-      const senderInfo = clients.get(ws);
-
-      switch (data.type) {
-        case 'join':
-          // data: { username, group }
-          clients.set(ws, { username: data.username, group: data.group });
-          if (!groups.has(data.group)) groups.set(data.group, new Set());
-          groups.get(data.group).add(ws);
-
-          // Send chat history to this client
-          ws.send(JSON.stringify({ type: 'history', messages: messages.get(data.group) || [] }));
-
-          broadcast(data.group, { 
-            type: 'notification', 
-            text: `${data.username} joined ${data.group}` 
-          });
-          break;
-
-        case 'message':
-          // data: { text }
-          if (!senderInfo) return;
-          const msgObj = { 
-            username: senderInfo.username, 
-            text: data.text, 
-            timestamp: Date.now() 
-          };
-          if (!messages.has(senderInfo.group)) messages.set(senderInfo.group, []);
-          const groupMessages = messages.get(senderInfo.group);
-          // Ограничим историю 100 сообщениями, чтобы не утечка памяти
-          if (groupMessages.length >= 100) groupMessages.shift();
-          groupMessages.push(msgObj);
-          broadcast(senderInfo.group, { type: 'message', ...msgObj });
-          break;
-
-        case 'signal':
-          // data: { to: "groupName", signalData: ... }
-          // В клиенте поле 'to' — это НАЗВАНИЕ ГРУППЫ, а не имя пользователя!
-          if (!senderInfo) return;
-
-          const targetGroup = data.to; // это группа
-          if (groups.has(targetGroup)) {
-            for (const client of groups.get(targetGroup)) {
-              // Не отправляем сигнал самому себе
-              if (client === ws) continue;
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                  type: 'signal',
-                  from: senderInfo.username, // кто прислал
-                  signalData: data.signalData
-                }));
-              }
-            }
-          }
-          break;
-
-        default:
-          break;
-      }
-    } catch (e) {
-      console.error('Invalid message:', e);
-    }
-  });
-
-  ws.on('close', () => {
-    const info = clients.get(ws);
-    if (info) {
-      const { username, group } = info;
-      clients.delete(ws);
-      if (groups.has(group)) {
-        groups.get(group).delete(ws);
-        broadcast(group, { 
-          type: 'notification', 
-          text: `${username} left ${group}` 
-        });
-      }
-    }
-  });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
-});
-
-// Ping clients to detect dead connections
-setInterval(() => {
-  wss.clients.forEach(ws => {
-    if (!ws.isAlive) {
-      return ws.terminate();
-    }
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
-
-const PORT = process.env.PORT || 10000;
+// 5. Запуск сервера
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`✅ Server listening on port ${PORT}`);
-  console.log(`🌐 WebSocket URL: ws://localhost:${PORT} (or wss://your-domain.onrender.com in production)`);
+  console.log(`✅ Сервер запущен на порту ${PORT}`);
+  console.log(`📡 WebSocket: wss://kotochat-e22r.onrender.com`);
 });
