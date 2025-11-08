@@ -1,115 +1,191 @@
 const http = require('http');
 const WebSocket = require('ws');
 
-// 1. Создаём HTTP-сервер (обязательно для wss:// на Render)
+// HTTP-сервер (обязателен для Render)
 const server = http.createServer((req, res) => {
-  // Опционально: отдать index.html, если захотите SPA
   if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(`
       <!DOCTYPE html>
-      <html><head><meta charset="utf-8"><title>❌</title></head>
+      <html><head><meta charset="utf-8"><title>✅ KotoChat Server</title></head>
       <body>
-        <h2>Это WebSocket-сервер ✅</h2>
-        <p>Подключайтесь через <code>wss://${req.headers.host}</code></p>
-        <p>Для чата откройте <a href="https://ваш-фронтенд.html">ваш HTML-файл</a></p>
+        <h2>✅ Это WebSocket-сервер KotoChat</h2>
+        <p><strong>WebSocket:</strong> <code>wss://kotochat-e22r.onrender.com</code></p>
+        <p>Подключайтесь из HTML-клиента</p>
+        <p>Версия: 1.1 (аккаунты + онлайн)</p>
       </body></html>
     `);
   } else {
-    res.writeHead(404);
-    res.end('Not found');
+    res.writeHead(404).end('404 Not Found');
   }
 });
 
-// 2. Подключаем WebSocket к HTTP-серверу
+// WebSocket-сервер
 const wss = new WebSocket.Server({ server });
 
-// 3. Хранение групп: { groupName: Set<WebSocket> }
-const groups = {
-  'Общий': new Set(),
-  'Работа': new Set(),
-  'Друзья': new Set()
-};
+// Хранилища
+const GROUPS = ['Общий', 'Работа', 'Друзья'];
+const groups = {};
+GROUPS.forEach(g => groups[g] = new Set());
 
-// 4. Обработка подключений
+const accounts = new Map();      // accountId → { ws, username, group }
+const usernames = new Set();     // для проверки уникальности имён
+
+// Вспомогательные функции
+function broadcast(groupName, data) {
+  if (!groups[groupName]) return;
+  const message = JSON.stringify(data);
+  groups[groupName].forEach(ws => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
+  });
+}
+
+function updateOnlineCount() {
+  GROUPS.forEach(group => {
+    const count = groups[group].size;
+    broadcast(group, { type: 'online_update', count });
+  });
+}
+
+// Обработка подключений
 wss.on('connection', (ws) => {
-  let username = 'anon';
-  let currentGroup = null;
-
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
-      
-      if (msg.type === 'join' && msg.username && groups[msg.group]) {
-        username = msg.username;
-        // Покинуть старую группу
-        if (currentGroup && groups[currentGroup].has(ws)) {
-          groups[currentGroup].delete(ws);
+
+      // 1. Вход в аккаунт
+      if (msg.type === 'login') {
+        const { username, accountId } = msg;
+        if (!username || !accountId || username.length < 2 || username.length > 20) {
+          ws.send(JSON.stringify({ type: 'login_failure', reason: 'invalid_name' }));
+          return ws.close(4001, 'Invalid username');
         }
-        // Вступить в новую
-        currentGroup = msg.group;
-        groups[currentGroup].add(ws);
+
+        if (usernames.has(username)) {
+          ws.send(JSON.stringify({ type: 'login_failure', username }));
+          return ws.close(4002, 'Username taken');
+        }
+
+        // Регистрируем
+        accounts.set(accountId, { ws, username, group: null });
+        usernames.add(username);
+        ws.accountId = accountId;
+        ws.username = username;
+
+        ws.send(JSON.stringify({ type: 'login_success', username, accountId }));
+        console.log(`✅ ${username} (${accountId}) вошёл`);
+        return;
+      }
+
+      // Проверка: вошёл ли пользователь?
+      if (!ws.accountId) {
+        ws.send(JSON.stringify({ type: 'notification', text: 'Требуется вход' }));
+        return ws.close(4000, 'Unauthorized');
+      }
+
+      // 2. Вступление в группу
+      if (msg.type === 'join' && msg.group && groups[msg.group]) {
+        const acc = accounts.get(ws.accountId);
+        const oldGroup = acc?.group;
+
+        // Покинуть старую группу
+        if (oldGroup && oldGroup !== msg.group) {
+          groups[oldGroup].delete(ws);
+          broadcast(oldGroup, {
+            type: 'notification',
+            text: `${ws.username} покинул группу`
+          });
+        }
+
+        // Войти в новую
+        acc.group = msg.group;
+        groups[msg.group].add(ws);
 
         // Уведомление
-        broadcast(currentGroup, {
+        broadcast(msg.group, {
           type: 'notification',
-          text: `${username} присоединился к группе`
+          text: `${ws.username} присоединился к группе`
         });
 
-      } else if (msg.type === 'message' && currentGroup && msg.text) {
-        broadcast(currentGroup, {
+        // Подтверждение
+        ws.send(JSON.stringify({
+          type: 'join_ack',
+          group: msg.group,
+          onlineCount: groups[msg.group].size
+        }));
+
+        updateOnlineCount();
+        return;
+      }
+
+      // 3. Отправка сообщения
+      if (msg.type === 'message' && msg.text && ws.accountId) {
+        const acc = accounts.get(ws.accountId);
+        if (!acc?.group) return;
+
+        broadcast(acc.group, {
           type: 'message',
-          username,
+          username: ws.username,
+          accountId: ws.accountId,
           text: msg.text,
           timestamp: Date.now()
         });
+        return;
+      }
 
-      } else if (msg.type === 'signal' && msg.to && msg.signalData) {
-        // Простая рассылка сигнала ВСЕМ в группе (для упрощения)
-        // В production лучше использовать peer-to-peer или указывать получателя
-        broadcast(msg.to, {
+      // 4. WebRTC сигналы (рассылка по группе)
+      if (msg.type === 'signal' && msg.to && msg.signalData) {
+        const acc = accounts.get(ws.accountId);
+        if (!acc?.group || msg.to !== acc.group) return;
+
+        broadcast(acc.group, {
           type: 'signal',
-          from: username,
+          from: ws.accountId,
+          username: ws.username,
           signalData: msg.signalData
         });
+        return;
       }
+
     } catch (e) {
-      console.error('Ошибка обработки сообщения:', e);
-      ws.send(JSON.stringify({ type: 'notification', text: '⚠️ Ошибка в сообщении' }));
+      console.error('Ошибка обработки:', e);
+      ws.send?.(JSON.stringify({ type: 'notification', text: '❌ Ошибка сервера' }));
     }
   });
 
-  ws.on('close', () => {
-    if (currentGroup && groups[currentGroup]) {
-      groups[currentGroup].delete(ws);
-      if (username !== 'anon') {
-        broadcast(currentGroup, {
-          type: 'notification',
-          text: `${username} покинул группу`
-        });
+  // Обработка отключения
+  ws.on('close', (code, reason) => {
+    if (ws.accountId) {
+      const acc = accounts.get(ws.accountId);
+      if (acc) {
+        // Покинуть группу
+        if (acc.group && groups[acc.group]) {
+          groups[acc.group].delete(ws);
+          broadcast(acc.group, {
+            type: 'notification',
+            text: `${acc.username} отключился`
+          });
+        }
+        // Очистка
+        usernames.delete(acc.username);
+        accounts.delete(ws.accountId);
+        updateOnlineCount();
+        console.log(`🔌 ${acc.username} (${ws.accountId}) вышел`);
       }
     }
   });
 
   ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
+    console.error('WS error:', err);
   });
 });
 
-// Вспомогательная функция: рассылка в группу
-function broadcast(groupName, data) {
-  if (!groups[groupName]) return;
-  const message = JSON.stringify(data);
-  groups[groupName].forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
-  });
-}
-
-// 5. Запуск сервера
+// Запуск
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`✅ Сервер запущен на порту ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ KotoChat Server v1.1 запущен на порту ${PORT}`);
   console.log(`📡 WebSocket: wss://kotochat-e22r.onrender.com`);
+  console.log(`👥 Поддержка аккаунтов и онлайн-статуса`);
 });
