@@ -1,6 +1,7 @@
 # KotoChat
-Это KotoChat Мессенджер лучше всех!
-Запуск:
-Запустите index.html введите имя пользователя и в поле ссылки вставьте эту ссылку: "https://kotochat-e22r.onrender.com" Ссылку не надо вводить она встроена (ссылка будет обновляться если у вас будет написано "Отключено" значит ссылка не актуальна)
-Веб версия KotoChat здесь:"https://kotochatweb.onrender.com/"
-В будущем тут будет больше способов
+Это KotoChat, Мессенджер лучше всех!
+Web Версия: https://kotochatweb.onrender.com
+Android:
+Скачайте .apk из репозитория kotochatapp
+Ios:
+https://kotochatapp.onrender.com
