@@ -1,295 +1,1045 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ru">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Кроссплатформенный Мессенджер</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KotoChat</title>
 <style>
-  body { margin: 0; font-family: Arial, sans-serif; display: flex; height: 100vh; }
-  #sidebar { width: 250px; background: #2f3542; color: white; display: flex; flex-direction: column; padding: 10px; }
-  #sidebar input, #sidebar button { margin-top: 5px; padding: 7px; border-radius: 4px; border: none; }
-  #sidebar input { width: 100%; box-sizing: border-box; }
-  #main { flex: 1; display: flex; flex-direction: column; }
-  #chatHeader { background: #57606f; color: white; padding: 10px; }
-  #messages { flex: 1; overflow-y: auto; padding: 10px; background: #f1f2f6; }
-  .msg { margin: 5px 0; max-width: 60%; padding: 7px 12px; border-radius: 15px; }
-  .msg.you { background: #70a1ff; color: white; align-self: flex-end; margin-left: auto; }
-  .msg.other { background: #dfe4ea; color: #2f3542; align-self: flex-start; margin-right: auto; }
-  #inputArea { display: flex; padding: 10px; background: #dfe4ea; }
-  #inputArea input[type=text] { flex: 1; padding: 10px; border-radius: 20px; border: 1px solid #ccc; }
-  #inputArea button { margin-left: 10px; padding: 10px 20px; border-radius: 20px; border: none; background: #2ed573; color: white; cursor: pointer; }
-  #groups { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
-  .group-btn { background: #3742fa; border: none; color: white; padding: 5px 10px; border-radius: 15px; cursor: pointer; }
-  #callArea { padding: 10px; background: #ced6e0; display: flex; gap: 10px; align-items: center; }
-  #localAudio, #remoteAudio { display: none; }
+  :root {
+    --bg: #0e0f13;
+    --panel: #15161c;
+    --panel-2: #1b1d25;
+    --border: #262833;
+    --text: #e8eaf0;
+    --muted: #868c9d;
+    --muted-2: #5c6272;
+    --accent: #4f7cff;
+    --accent-dim: #3a5fd0;
+    --green: #34c273;
+    --red: #d95c5c;
+    font-family: "Segoe UI", Inter, system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--text); overflow: hidden; }
+
+  .app { display: flex; height: 100vh; }
+
+  /* ============ Sidebar ============ */
+  .sidebar {
+    width: 340px; min-width: 280px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .sb-head {
+    padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: .3px; }
+  .logo b { color: var(--accent); font-weight: 700; }
+  .icon-btn {
+    width: 34px; height: 34px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 9px;
+    font-size: 19px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+  }
+  .icon-btn:hover { background: var(--accent-dim); }
+  .search { padding: 10px 14px; }
+  .search input {
+    width: 100%; padding: 9px 12px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px; outline: none;
+  }
+  .search input:focus { border-color: var(--accent); }
+  .tabs { display: flex; gap: 4px; padding: 0 14px 8px; }
+  .tab {
+    flex: 1; text-align: center; padding: 6px 0;
+    font-size: 12.5px; color: var(--muted);
+    background: none; border: none; border-radius: 7px; cursor: pointer;
+  }
+  .tab.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+  .chats { flex: 1; overflow-y: auto; padding: 4px 8px; }
+  .chat-item {
+    display: flex; gap: 12px; align-items: center;
+    padding: 11px 10px; cursor: pointer; border-radius: 10px;
+    transition: background .1s;
+  }
+  .chat-item:hover { background: var(--panel-2); }
+  .chat-item.active { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--panel-2); color: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-weight: 600; font-size: 14px;
+    border: 1px solid var(--border);
+  }
+  .avatar svg { width: 20px; height: 20px; stroke: var(--accent); }
+  .chat-info { flex: 1; min-width: 0; }
+  .chat-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-last { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .chat-meta { text-align: right; flex-shrink: 0; }
+  .chat-meta .time { font-size: 11px; color: var(--muted-2); }
+  .badge {
+    display: inline-block; margin-top: 5px;
+    background: var(--accent); color: #fff;
+    font-size: 11px; font-weight: 700;
+    border-radius: 10px; padding: 1px 7px;
+  }
+  .type-ico { width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; stroke: var(--muted-2); }
+
+  /* ============ Main ============ */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .main-head {
+    padding: 12px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 13px;
+  }
+  .main-head .avatar { width: 38px; height: 38px; }
+  .mh-name { font-weight: 600; font-size: 15px; }
+  .mh-sub { font-size: 12px; margin-top: 2px; }
+  .mh-sub.on { color: var(--green); }
+  .mh-sub.off { color: var(--muted); }
+  .mh-actions { margin-left: auto; }
+  .btn {
+    background: var(--accent); border: none; color: #fff;
+    padding: 8px 14px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background .15s;
+  }
+  .btn:hover { background: var(--accent-dim); }
+  .btn.ghost { background: none; border: 1px solid var(--border); color: var(--muted); }
+  .btn.ghost:hover { color: var(--text); border-color: var(--accent); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  .messages { flex: 1; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 4px; }
+  .msg { max-width: 62%; padding: 8px 12px; border-radius: 12px; font-size: 14px; line-height: 1.45; word-wrap: break-word; white-space: pre-wrap; }
+  .msg.out { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.in { align-self: flex-start; background: var(--panel-2); border-bottom-left-radius: 4px; }
+  .msg .sender { display: block; font-size: 11.5px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+  .msg.out .sender { color: #dfe8ff; }
+  .msg .time { display: block; font-size: 10px; opacity: .6; margin-top: 3px; text-align: right; }
+  .divider { align-self: center; font-size: 11px; color: var(--muted); background: var(--panel-2); padding: 3px 10px; border-radius: 10px; margin: 6px 0; }
+  .empty {
+    flex: 1; display: flex; flex-direction: column; gap: 10px;
+    align-items: center; justify-content: center; color: var(--muted-2); text-align: center;
+  }
+  .empty svg { width: 56px; height: 56px; stroke: var(--muted-2); }
+
+  .composer { display: flex; gap: 10px; padding: 13px 16px; background: var(--panel); border-top: 1px solid var(--border); }
+  .composer input {
+    flex: 1; padding: 11px 14px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); font-size: 14px; outline: none;
+  }
+  .composer input:focus { border-color: var(--accent); }
+  .composer input:disabled { opacity: .5; }
+
+  /* ============ Modal ============ */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(5,6,10,.7);
+    display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; width: 100%; max-width: 460px;
+    max-height: 90vh; overflow-y: auto; padding: 22px;
+  }
+  .modal h3 { font-size: 16px; margin-bottom: 4px; }
+  .modal .hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-bottom: 16px; }
+  .modal label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  .modal input[type=text] {
+    width: 100%; padding: 10px 12px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13.5px; outline: none;
+  }
+  .modal input[type=text]:focus { border-color: var(--accent); }
+  .modal textarea {
+    width: 100%; padding: 9px; min-height: 52px; resize: vertical;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text);
+    font-family: var(--mono); font-size: 11px; outline: none;
+  }
+  .modal textarea:focus { border-color: var(--accent); }
+  .menu-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); margin-bottom: 8px;
+    transition: background .1s;
+  }
+  .menu-item:hover { background: var(--panel-2); }
+  .menu-item svg { width: 22px; height: 22px; stroke: var(--accent); flex-shrink: 0; }
+  .menu-item .t { font-size: 14px; font-weight: 600; }
+  .menu-item .d { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .qr-box {
+    display: flex; justify-content: center; margin: 12px 0;
+  }
+  .qr-box canvas {
+    background: #fff; border-radius: 10px; padding: 6px;
+    image-rendering: pixelated;
+  }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row .btn { flex: 1; }
+  .status { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .status.err { color: var(--red); }
+
+  ::-webkit-scrollbar { width: 7px; }
+  ::-webkit-scrollbar-thumb { background: #2a2d3a; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  @media (max-width: 720px) {
+    .sidebar { width: 100%; min-width: 0; }
+    .main { display: none; }
+    .app.in-chat .sidebar { display: none; }
+    .app.in-chat .main { display: flex; }
+    .msg { max-width: 80%; }
+  }
 </style>
 </head>
 <body>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="sb-head">
+      <div class="logo">Koto<b>Chat</b></div>
+      <button class="icon-btn" id="btnNew" title="Новый чат">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+    </div>
+    <div class="search"><input id="search" placeholder="Поиск" /></div>
+    <div class="tabs">
+      <button class="tab active" data-f="all">Все</button>
+      <button class="tab" data-f="contact">Люди</button>
+      <button class="tab" data-f="group">Группы</button>
+      <button class="tab" data-f="channel">Каналы</button>
+    </div>
+    <div class="chats" id="chatList"></div>
+  </aside>
 
-<div id="sidebar">
-  <h3>Мессенджер</h3>
-  <input id="usernameInput" placeholder="Имя пользователя" />
-  <input id="ngrokInput" placeholder="WebSocket URL (wss://...)" />
-  <div id="groups"></div>
-  <button id="connectBtn">Подключиться</button>
-  <div id="status" style="margin-top:10px; font-size: 12px; color: lightgray;"></div>
+  <section class="main">
+    <div class="main-head" id="mainHead" style="display:none">
+      <div class="avatar" id="hAvatar"></div>
+      <div>
+        <div class="mh-name" id="hName"></div>
+        <div class="mh-sub off" id="hSub"></div>
+      </div>
+      <div class="mh-actions" id="hActions"></div>
+    </div>
+    <div class="messages" id="messages">
+      <div class="empty">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.4"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 20l1-5.1a8.4 8.4 0 1 1 17-3.4z"/></svg>
+        <div>Выберите чат или создайте новый</div>
+      </div>
+    </div>
+    <div class="composer">
+      <input id="input" placeholder="Написать сообщение..." autocomplete="off" disabled />
+      <button class="btn" id="send" disabled>Отправить</button>
+    </div>
+  </section>
 </div>
 
-<div id="main">
-  <div id="chatHeader">Выберите группу</div>
-  <div id="messages"></div>
-  <div id="inputArea" style="display:none;">
-    <input id="messageInput" type="text" placeholder="Введите сообщение..." />
-    <button id="sendBtn">Отправить</button>
+<!-- Main menu modal -->
+<div class="overlay" id="ovMenu">
+  <div class="modal">
+    <h3>Новый чат</h3>
+    <div class="hint">Собеседник может быть на любом расстоянии — соединение устанавливается напрямую.</div>
+    <div class="menu-item" data-new="contact">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>
+      <div><div class="t">Контакт</div><div class="d">Личный чат с одним человеком</div></div>
+    </div>
+    <div class="menu-item" data-new="group">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="9" r="3.4"/><circle cx="17" cy="10.5" r="2.6"/><path d="M2.5 20c0-3.4 2.9-5.5 6.5-5.5s6.5 2.1 6.5 5.5"/><path d="M16.5 14.6c2.9.2 5 2 5 4.6"/></svg>
+      <div><div class="t">Группа</div><div class="d">Общий чат для нескольких людей</div></div>
+    </div>
+    <div class="menu-item" data-new="channel">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4l5 4V6z"/><path d="M8 8h7a5 5 0 0 1 0 10H8"/></svg>
+      <div><div class="t">Канал</div><div class="d">Публикации: пишете только вы, читают все</div></div>
+    </div>
+    <div class="menu-item" id="btnJoinMenu">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17.5h7M17.5 14v7"/></svg>
+      <div><div class="t">Присоединиться</div><div class="d">По коду или QR-приглашению</div></div>
+    </div>
+    <div class="row"><button class="btn ghost" data-close>Отмена</button></div>
   </div>
-  <div id="callArea" style="display:none;">
-    <button id="callBtn">Позвонить</button>
-    <button id="hangupBtn" disabled>Завершить звонок</button>
-    <audio id="localAudio" autoplay muted></audio>
-    <audio id="remoteAudio" autoplay></audio>
+</div>
+
+<!-- Create chat modal -->
+<div class="overlay" id="ovCreate">
+  <div class="modal">
+    <h3 id="createTitle">Новый контакт</h3>
+    <label>Название</label>
+    <input type="text" id="createName" placeholder="Например: Максим" maxlength="24" />
+    <div class="row">
+      <button class="btn ghost" data-close>Отмена</button>
+      <button class="btn" id="btnCreateOk">Создать</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invite modal (host side) -->
+<div class="overlay" id="ovInvite">
+  <div class="modal">
+    <h3>Приглашение</h3>
+    <div class="hint">Покажите QR-код или отправьте код собеседнику. Отсканируйте его камерой телефона или передайте текстом.</div>
+    <div class="qr-box" id="qrHostBox"><canvas id="qrHost"></canvas></div>
+    <label>Код приглашения</label>
+    <textarea id="offerOut" readonly placeholder="Готовится..."></textarea>
+    <div class="row"><button class="btn ghost" id="btnCopyOffer">Копировать</button></div>
+    <label>Ответ собеседника</label>
+    <textarea id="answerIn" placeholder="Вставьте сюда код-ответ собеседника"></textarea>
+    <div class="row"><button class="btn" id="btnAcceptAnswer">Подключить</button></div>
+    <div class="status" id="inviteStatus"></div>
+    <div class="row"><button class="btn ghost" data-close>Закрыть</button></div>
+  </div>
+</div>
+
+<!-- Join modal (guest side) -->
+<div class="overlay" id="ovJoin">
+  <div class="modal">
+    <h3>Присоединиться к чату</h3>
+    <div class="hint">Вставьте код приглашения, отсканированный с QR, или полученный текстом.</div>
+    <label>Код приглашения</label>
+    <textarea id="offerIn" placeholder="Вставьте код приглашения"></textarea>
+    <div class="row"><button class="btn" id="btnJoin">Подключиться</button></div>
+    <label id="answerLabel" style="display:none">Ваш код-ответ — отправьте его владельцу чата</label>
+    <div class="qr-box" id="qrGuestBox" style="display:none"><canvas id="qrGuest"></canvas></div>
+    <textarea id="answerOut" readonly style="display:none"></textarea>
+    <div class="row" id="copyAnswerRow" style="display:none"><button class="btn ghost" id="btnCopyAnswer">Копировать ответ</button></div>
+    <div class="status" id="joinStatus"></div>
+    <div class="row"><button class="btn ghost" data-close>Закрыть</button></div>
+  </div>
+</div>
+
+<!-- Profile modal -->
+<div class="overlay" id="ovProfile">
+  <div class="modal">
+    <h3>Ваш профиль</h3>
+    <div class="hint">Имя увидят собеседники в группах и каналах.</div>
+    <label>Имя</label>
+    <input type="text" id="profileName" maxlength="24" />
+    <div class="row"><button class="btn" id="btnSaveProfile">Сохранить</button></div>
   </div>
 </div>
 
 <script>
-(() => {
-  let ws = null;
-  let username = '';
-  let currentGroup = '';
-  let connected = false;
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
 
-  const usernameInput = document.getElementById('usernameInput');
-  const ngrokInput = document.getElementById('ngrokInput');
-  const connectBtn = document.getElementById('connectBtn');
-  const status = document.getElementById('status');
-  const groupsDiv = document.getElementById('groups');
-
-  const chatHeader = document.getElementById('chatHeader');
-  const messagesDiv = document.getElementById('messages');
-  const inputArea = document.getElementById('inputArea');
-  const messageInput = document.getElementById('messageInput');
-  const sendBtn = document.getElementById('sendBtn');
-
-  const callArea = document.getElementById('callArea');
-  const callBtn = document.getElementById('callBtn');
-  const hangupBtn = document.getElementById('hangupBtn');
-  const localAudio = document.getElementById('localAudio');
-  const remoteAudio = document.getElementById('remoteAudio');
-
-  // Список групп (можно добавить динамически)
-  const groups = ['Общий', 'Работа', 'Друзья'];
-
-  function showStatus(msg) {
-    status.textContent = msg;
-  }
-
-  function addGroupButtons() {
-    groupsDiv.innerHTML = '';
-    for (const g of groups) {
-      const btn = document.createElement('button');
-      btn.textContent = g;
-      btn.className = 'group-btn';
-      btn.onclick = () => switchGroup(g);
-      groupsDiv.appendChild(btn);
+  /* ================= UTF-8 / base64url utils ================= */
+  function utf8(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var cp = str.codePointAt(i);
+      if (cp > 0xffff) i++;
+      if (cp < 0x80) out.push(cp);
+      else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 63));
+      else if (cp < 0x10000) out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+      else out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
     }
+    return out;
+  }
+  function fromUtf8(b) {
+    var s = "", i = 0;
+    while (i < b.length) {
+      var c = b[i];
+      if (c < 0x80) { s += String.fromCharCode(c); i++; }
+      else if (c < 0xc0) { s += "\uFFFD"; i++; }
+      else if (c < 0xe0) { s += String.fromCharCode(((c & 31) << 6) | (b[i + 1] & 63)); i += 2; }
+      else if (c < 0xf0) { s += String.fromCharCode(((c & 15) << 12) | ((b[i + 1] & 63) << 6) | (b[i + 2] & 63)); i += 3; }
+      else { s += String.fromCodePoint(((c & 7) << 18) | ((b[i + 1] & 63) << 12) | ((b[i + 2] & 63) << 6) | (b[i + 3] & 63)); i += 4; }
+    }
+    return s;
+  }
+  var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  function b64u(bytes) {
+    var s = "";
+    for (var i = 0; i < bytes.length; i += 3) {
+      var b0 = bytes[i], b1 = i + 1 < bytes.length ? bytes[i + 1] : 0, b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+      s += B64[b0 >> 2] + B64[((b0 & 3) << 4) | (b1 >> 4)];
+      s += (i + 1 < bytes.length) ? B64[((b1 & 15) << 2) | (b2 >> 6)] : "=";
+      s += (i + 2 < bytes.length) ? B64[b2 & 63] : "=";
+    }
+    return s;
+  }
+  function unb64u(str) {
+    str = str.trim().replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+    var bytes = [], bits = 0, acc = 0;
+    for (var i = 0; i < str.length; i++) {
+      var v = B64.indexOf(str[i]);
+      if (v < 0) throw new Error("bad code");
+      acc = (acc << 6) | v; bits += 6;
+      if (bits >= 8) { bits -= 8; bytes.push((acc >> bits) & 255); }
+    }
+    return bytes;
   }
 
-  function switchGroup(group) {
-    if (!connected) return alert('Сначала подключитесь');
-    if (group === currentGroup) return;
-    currentGroup = group;
-    chatHeader.textContent = `Группа: ${group}`;
-    messagesDiv.innerHTML = '';
-    ws.send(JSON.stringify({ type: 'join', username, group }));
-    inputArea.style.display = 'flex';
-    callArea.style.display = 'flex';
-  }
-
-  function addMessage(usernameMsg, text, isYou, time) {
-    const div = document.createElement('div');
-    div.className = 'msg ' + (isYou ? 'you' : 'other');
-    const timeStr = new Date(time).toLocaleTimeString();
-    div.textContent = `${usernameMsg}: ${text} (${timeStr})`;
-    messagesDiv.appendChild(div);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-  }
-
-  function connect() {
-    username = usernameInput.value.trim();
-    const url = ngrokInput.value.trim();
-    if (!username) return alert('Введите имя пользователя');
-    if (!url) return alert('Введите URL WebSocket');
-
-    ws = new WebSocket(url);
-    ws.onopen = () => {
-      connected = true;
-      showStatus('Подключено');
-      addGroupButtons();
-      inputArea.style.display = 'none';
-      callArea.style.display = 'none';
-    };
-    ws.onerror = (e) => {
-      showStatus('Ошибка подключения');
-      console.error(e);
-    };
-    ws.onclose = () => {
-      connected = false;
-      showStatus('Отключено');
-      inputArea.style.display = 'none';
-      callArea.style.display = 'none';
-      messagesDiv.innerHTML = '';
-      currentGroup = '';
-    };
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      switch(data.type) {
-        case 'history':
-          messagesDiv.innerHTML = '';
-          for (const msg of data.messages) {
-            addMessage(msg.username, msg.text, msg.username === username, msg.timestamp);
-          }
-          break;
-        case 'message':
-          addMessage(data.username, data.text, data.username === username, data.timestamp);
-          if (data.username !== username && Notification.permission === 'granted') {
-            new Notification(`Новое сообщение в ${currentGroup}`, { body: `${data.username}: ${data.text}` });
-          }
-          break;
-        case 'notification':
-          addMessage('Система', data.text, false, Date.now());
-          break;
-        case 'signal':
-          handleSignal(data);
-          break;
+  /* ================= QR encoder (v1-9, ECC L) ================= */
+  var QR = (function () {
+    var gexp = new Array(512), glog = new Array(256), x = 1;
+    for (var i = 0; i < 512; i++) { gexp[i] = x; if (i < 256) glog[x] = i; x <<= 1; if (x & 0x100) x ^= 0x11d; }
+    function mul(a, b) { return (a === 0 || b === 0) ? 0 : gexp[glog[a] + glog[b]]; }
+    function genPoly(n) {
+      var p = [1];
+      for (var i = 0; i < n; i++) {
+        var q = new Array(p.length + 1).fill(0);
+        for (var j = 0; j < p.length; j++) { q[j] ^= mul(p[j], 1); q[j + 1] ^= mul(p[j], gexp[i]); }
+        p = q;
       }
-    };
-  }
-
-  connectBtn.onclick = connect;
-
-  sendBtn.onclick = () => {
-    const text = messageInput.value.trim();
-    if (!text) return;
-    ws.send(JSON.stringify({ type: 'message', text }));
-    messageInput.value = '';
-  };
-
-  messageInput.onkeyup = (e) => {
-    if (e.key === 'Enter') sendBtn.click();
-  };
-
-  // WebRTC звонки
-  let localStream = null;
-  let peerConnection = null;
-  const config = {
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-  };
-
-  async function startCall() {
-    if (!currentGroup) return alert('Выберите группу');
-
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    localAudio.srcObject = localStream;
-    localAudio.style.display = 'block';
-
-    peerConnection = new RTCPeerConnection(config);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        ws.send(JSON.stringify({
-          type: 'signal',
-          to: currentGroup, // для упрощения — шлём группе, можно улучшить по пользователям
-          signalData: { candidate: event.candidate }
-        }));
+      return p;
+    }
+    function rsEnc(msg, nsym) {
+      var gen = genPoly(nsym), res = msg.concat(new Array(nsym).fill(0));
+      for (var i = 0; i < msg.length; i++) {
+        var c = res[i];
+        if (c !== 0) for (var j = 0; j < gen.length; j++) res[i + j] ^= mul(gen[j], c);
       }
-    };
-
-    peerConnection.ontrack = (event) => {
-      remoteAudio.srcObject = event.streams[0];
-      remoteAudio.style.display = 'block';
-    };
-
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-
-    ws.send(JSON.stringify({
-      type: 'signal',
-      to: currentGroup,
-      signalData: { sdp: peerConnection.localDescription }
-    }));
-
-    callBtn.disabled = true;
-    hangupBtn.disabled = false;
-  }
-
-  async function handleSignal(data) {
-    if (!peerConnection) {
-      peerConnection = new RTCPeerConnection(config);
-      peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          ws.send(JSON.stringify({
-            type: 'signal',
-            to: data.from,
-            signalData: { candidate: event.candidate }
-          }));
+      return res.slice(msg.length);
+    }
+    var VT = { 1:[26,7,1],2:[44,10,1],3:[70,15,1],4:[100,20,1],5:[134,26,1],6:[172,18,2],7:[196,20,2],8:[242,24,2],9:[292,30,2] };
+    var ALIGN = { 2:[6,18],3:[6,22],4:[6,26],5:[6,30],6:[6,34],7:[6,22,38],8:[6,24,42],9:[6,26,46] };
+    var MASKF = [
+      function (r, c) { return (r + c) % 2 === 0; }, function (r, c) { return r % 2 === 0; },
+      function (r, c) { return c % 3 === 0; }, function (r, c) { return (r + c) % 3 === 0; },
+      function (r, c) { return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0; },
+      function (r, c) { return ((r * c) % 2) + ((r * c) % 3) === 0; },
+      function (r, c) { return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0; },
+      function (r, c) { return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0; }
+    ];
+    function makeMatrix(version, dataCw, maskId) {
+      var size = 17 + 4 * version;
+      var m = [];
+      for (var i = 0; i < size; i++) m.push(new Array(size).fill(null));
+      function finder(r0, c0) {
+        for (var r = -1; r <= 7; r++) for (var c = -1; c <= 7; c++) {
+          var rr = r0 + r, cc = c0 + c;
+          if (rr < 0 || cc < 0 || rr >= size || cc >= size) continue;
+          m[rr][cc] = r >= 0 && r <= 6 && c >= 0 && c <= 6 && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
         }
-      };
-      peerConnection.ontrack = (event) => {
-        remoteAudio.srcObject = event.streams[0];
-        remoteAudio.style.display = 'block';
-      };
-    }
-
-    if (data.signalData.sdp) {
-      await peerConnection.setRemoteDescription(new RTCSessionDescription(data.signalData.sdp));
-      if (data.signalData.sdp.type === 'offer') {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        localAudio.srcObject = localStream;
-        localAudio.style.display = 'block';
-        localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-
-        ws.send(JSON.stringify({
-          type: 'signal',
-          to: data.from,
-          signalData: { sdp: peerConnection.localDescription }
-        }));
       }
-    } else if (data.signalData.candidate) {
-      try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.signalData.candidate));
-      } catch (e) {
-        console.error(e);
+      finder(0, 0); finder(0, size - 7); finder(size - 7, 0);
+      for (var i = 8; i < size - 8; i++) { m[6][i] = i % 2 === 0; m[i][6] = i % 2 === 0; }
+      var ap = ALIGN[version];
+      if (ap) for (var ai = 0; ai < ap.length; ai++) for (var aj = 0; aj < ap.length; aj++) {
+        var r = ap[ai], c = ap[aj];
+        if ((r < 7 && c < 7) || (r < 7 && c > size - 8) || (r > size - 8 && c < 7)) continue;
+        for (var dr = -2; dr <= 2; dr++) for (var dc = -2; dc <= 2; dc++) m[r + dr][c + dc] = Math.max(Math.abs(dr), Math.abs(dc)) !== 1;
+      }
+      m[size - 8][8] = true;
+      var fmtData = (1 << 3) | maskId, rem = fmtData << 10;
+      for (var i = 14; i >= 10; i--) if ((rem >> i) & 1) rem ^= 0x537 << (i - 10);
+      var fmt = ((fmtData << 10) | rem) ^ 0x5412;
+      for (var i = 0; i < 15; i++) {
+        var b = (fmt >> i) & 1;
+        if (i < 6) m[i][8] = b; else if (i < 8) m[i + 1][8] = b; else m[size - 15 + i][8] = b;
+        if (i < 8) m[8][size - i - 1] = b; else if (i < 9) m[8][15 - i] = b; else m[8][15 - i - 1] = b;
+      }
+      if (version >= 7) {
+        var vrem = version << 12;
+        for (var i = 17; i >= 12; i--) if ((vrem >> i) & 1) vrem ^= 0x1f25 << (i - 12);
+        var vinfo = (version << 12) | (vrem & 0xfff);
+        for (var i = 0; i < 18; i++) {
+          var b = (vinfo >> i) & 1;
+          m[Math.floor(i / 3)][i % 3 + size - 11] = b;
+          m[i % 3 + size - 11][Math.floor(i / 3)] = b;
+        }
+      }
+      var inc = -1, row = size - 1, bit = 7, idx = 0;
+      for (var col = size - 1; col > 0; col -= 2) {
+        if (col === 6) col--;
+        while (true) {
+          for (var c = 0; c < 2; c++) {
+            var cc = col - c;
+            if (m[row][cc] === null) {
+              var dark = false;
+              if (idx < dataCw.length) dark = ((dataCw[idx] >> bit) & 1) === 1;
+              if (MASKF[maskId](row, cc)) dark = !dark;
+              m[row][cc] = dark;
+              bit--; if (bit < 0) { idx++; bit = 7; }
+            }
+          }
+          row += inc;
+          if (row < 0 || row >= size) { row -= inc; inc = -inc; break; }
+        }
+      }
+      for (var r = 0; r < size; r++) for (var c = 0; c < size; c++) if (m[r][c] === null) m[r][c] = false;
+      return m;
+    }
+    function penalty(m) {
+      var size = m.length, p = 0;
+      function runPen(line) {
+        var s = 0, i = 0;
+        while (i < line.length) { var j = i; while (j < line.length && line[j] === line[i]) j++; var run = j - i; if (run >= 5) s += 3 + (run - 5); i = j; }
+        return s;
+      }
+      for (var r = 0; r < size; r++) p += runPen(m[r]);
+      for (var c = 0; c < size; c++) { var col = []; for (var r = 0; r < size; r++) col.push(m[r][c]); p += runPen(col); }
+      for (var r = 0; r < size - 1; r++) for (var c = 0; c < size - 1; c++) {
+        var v = m[r][c];
+        if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) p += 3;
+      }
+      var PAT = [1, 0, 1, 1, 1, 0, 1];
+      for (var pass = 0; pass < 2; pass++) for (var a = 0; a < size; a++) for (var b = 0; b + 6 <= size - 1; b++) {
+        var ok = true;
+        for (var k = 0; k < 7; k++) { var v = pass === 0 ? m[a][b + k] : m[b + k][a]; if ((v ? 1 : 0) !== PAT[k]) { ok = false; break; } }
+        if (!ok) continue;
+        var L = b >= 4, R = b + 10 <= size - 1;
+        if (L) for (var k = 1; k <= 4; k++) { var v = pass === 0 ? m[a][b - k] : m[b - k][a]; if (v) { L = false; break; } }
+        if (R) for (var k = 7; k <= 10; k++) { var v = pass === 0 ? m[a][b + k] : m[b + k][a]; if (v) { R = false; break; } }
+        if ((L || b === 0) || (R || b + 7 === size)) p += 40;
+      }
+      var dark = 0;
+      for (var r = 0; r < size; r++) for (var c = 0; c < size; c++) if (m[r][c]) dark++;
+      p += Math.floor(Math.abs(dark * 100 / (size * size) - 50) / 5) * 10;
+      return p;
+    }
+    function encode(bytes) {
+      var version = 0;
+      for (var v = 1; v <= 9; v++) { var t = VT[v]; if (bytes.length <= t[0] - t[1] * t[2] - 2) { version = v; break; } }
+      if (!version) throw new Error("Слишком длинный код для QR");
+      var total = VT[version][0], ec = VT[version][1], blocks = VT[version][2], dataLen = total - ec * blocks;
+      var bits = [];
+      function push(val, n) { for (var i = n - 1; i >= 0; i--) bits.push((val >> i) & 1); }
+      push(4, 4); push(bytes.length, 8);
+      for (var i = 0; i < bytes.length; i++) push(bytes[i], 8);
+      push(0, Math.min(4, dataLen * 8 - bits.length));
+      while (bits.length % 8) bits.push(0);
+      var dataCw = [];
+      for (var i = 0; i < bits.length; i += 8) { var b = 0; for (var j = 0; j < 8; j++) b = (b << 1) | bits[i + j]; dataCw.push(b); }
+      var PAD = [0xec, 0x11], pi = 0;
+      while (dataCw.length < dataLen) dataCw.push(PAD[(pi++) % 2]);
+      var blockLen = dataLen / blocks, datas = [], eccs = [];
+      for (var b = 0; b < blocks; b++) { var blk = dataCw.slice(b * blockLen, (b + 1) * blockLen); datas.push(blk); eccs.push(rsEnc(blk, ec)); }
+      var full = [];
+      for (var i = 0; i < blockLen; i++) for (var b = 0; b < blocks; b++) full.push(datas[b][i]);
+      for (var i = 0; i < ec; i++) for (var b = 0; b < blocks; b++) full.push(eccs[b][i]);
+      var best = null, bestP = Infinity;
+      for (var mask = 0; mask < 8; mask++) { var m = makeMatrix(version, full, mask); var p = penalty(m); if (p < bestP) { bestP = p; best = m; } }
+      return best;
+    }
+    function draw(canvas, text, scale) {
+      scale = scale || 4;
+      var bytes = utf8(text);
+      var m = encode(bytes);
+      var quiet = 4, size = m.length;
+      canvas.width = (size + quiet * 2) * scale;
+      canvas.height = canvas.width;
+      var ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#000";
+      for (var r = 0; r < size; r++) for (var c = 0; c < size; c++) {
+        if (m[r][c]) ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
       }
     }
+    return { draw: draw };
+  })();
+
+  /* ================= Compact invite format ================= */
+  // [ver=1][type][nameLen][name..][ufragLen][ufrag..][pwdLen][pwd..][fp(32)][candType][ip(4)][port(2)]
+  function packPayload(type, name, ufrag, pwd, fpBytes, cand) {
+    var nb = utf8(name);
+    if (nb.length > 40) nb = nb.slice(0, 40);
+    var b = [1, type, nb.length];
+    b = b.concat(nb);
+    var ub = utf8(ufrag), pb2 = utf8(pwd);
+    b.push(ub.length); b = b.concat(ub);
+    b.push(pb2.length); b = b.concat(pb2);
+    b = b.concat(fpBytes);
+    b.push(cand.typ === "srflx" ? 1 : 0);
+    var ip = cand.ip.split(".");
+    if (ip.length !== 4) throw new Error("no ipv4");
+    b = b.concat(ip.map(Number));
+    b.push((cand.port >> 8) & 255, cand.port & 255);
+    return b;
+  }
+  function unpackPayload(b) {
+    if (!b || b[0] !== 1) return null;
+    var i = 1, type = b[i++];
+    var nlen = b[i++]; var name = fromUtf8(b.slice(i, i + nlen)); i += nlen;
+    var ulen = b[i++]; var ufrag = fromUtf8(b.slice(i, i + ulen)); i += ulen;
+    var plen = b[i++]; var pwd = fromUtf8(b.slice(i, i + plen)); i += plen;
+    var fp = b.slice(i, i + 32).map(function (x) { return x.toString(16).padStart(2, "0").toUpperCase(); }).join(":"); i += 32;
+    var typ = b[i++] === 1 ? "srflx" : "host";
+    var ip = b[i] + "." + b[i + 1] + "." + b[i + 2] + "." + b[i + 3]; i += 4;
+    var port = (b[i] << 8) | b[i + 1];
+    return { type: type, name: name, ufrag: ufrag, pwd: pwd, fp: fp, typ: typ, ip: ip, port: port };
+  }
+  function buildSDP(p, setup) {
+    return "v=0\r\n" +
+      "o=- 0 0 IN IP4 127.0.0.1\r\n" +
+      "s=-\r\n" +
+      "t=0 0\r\n" +
+      "a=group:BUNDLE 0\r\n" +
+      "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n" +
+      "c=IN IP4 0.0.0.0\r\n" +
+      "a=ice-ufrag:" + p.ufrag + "\r\n" +
+      "a=ice-pwd:" + p.pwd + "\r\n" +
+      "a=fingerprint:sha-256 " + p.fp + "\r\n" +
+      "a=setup:" + setup + "\r\n" +
+      "a=mid:0\r\n" +
+      "a=sctp-port:5000\r\n" +
+      "a=candidate:1 1 UDP 2130706431 " + p.ip + " " + p.port + " typ " + p.typ + "\r\n";
+  }
+  function extractPayload(sdp, type, name) {
+    var ufrag = (sdp.match(/a=ice-ufrag:(.+)/) || [])[1];
+    var pwd = (sdp.match(/a=ice-pwd:(.+)/) || [])[1];
+    var fpHex = (sdp.match(/a=fingerprint:sha-256 ([0-9A-Fa-f:]+)/) || [])[1];
+    if (!ufrag || !pwd || !fpHex) throw new Error("SDP parse");
+    var fpBytes = fpHex.split(":").map(function (h) { return parseInt(h, 16); });
+    if (fpBytes.length !== 32) throw new Error("fp");
+    var cands = sdp.split("\r\n").filter(function (l) { return l.indexOf("a=candidate:") === 0 && l.indexOf(" udp ") > 0; });
+    var pick = null;
+    var re = /a=candidate:\S+ 1 udp \d+ (\d+\.\d+\.\d+\.\d+) (\d+) typ (\w+)/i;
+    cands.forEach(function (l) {
+      var m = l.match(re);
+      if (!m) return;
+      var cand = { ip: m[1], port: parseInt(m[2]), typ: m[3].toLowerCase() };
+      if (cand.typ === "srflx") pick = cand;
+      else if (!pick && cand.typ === "host" && cand.ip !== "0.0.0.0") pick = cand;
+    });
+    if (!pick) throw new Error("no candidate");
+    return packPayload(type, name, ufrag, pwd, fpBytes, pick);
+  }
+  function sdpToCompactCode(sdp, type, name) {
+    try { return "K1." + b64u(extractPayload(sdp, type, name)); }
+    catch (e) { return "KF." + b64u(utf8(JSON.stringify({ type: type, name: name, sdp: sdp }))); }
+  }
+  function codeToSDP(code, setup) {
+    code = code.trim();
+    if (code.indexOf("K1.") === 0) {
+      var p = unpackPayload(unb64u(code.slice(3)));
+      if (!p) throw new Error("Код повреждён");
+      return { sdp: buildSDP(p, setup), type: p.type, name: p.name };
+    }
+    if (code.indexOf("KF.") === 0) {
+      var o = JSON.parse(fromUtf8(unb64u(code.slice(3))));
+      var desc = JSON.parse(o.sdp.replace(/\\r\\n/g, "\r\n"));
+      return { sdp: desc.sdp, type: o.type, name: o.name };
+    }
+    throw new Error("Некорректный код");
+  }
+  // answer code only transports SDP (type/name known from invite)
+  function answerSdpToCode(sdp) {
+    try { return "K1." + b64u(extractPayload(sdp, 0, "")); }
+    catch (e) { return "KF." + b64u(utf8(JSON.stringify({ sdp: sdp }))); }
+  }
+  function answerCodeToSDP(code) {
+    code = code.trim();
+    if (code.indexOf("K1.") === 0) {
+      var p = unpackPayload(unb64u(code.slice(3)));
+      return buildSDP(p, "active");
+    }
+    if (code.indexOf("KF.") === 0) {
+      var o = JSON.parse(fromUtf8(unb64u(code.slice(3))));
+      var d = (typeof o.sdp === "string") ? JSON.parse(o.sdp) : o.sdp;
+      return d.sdp || o.sdp;
+    }
+    throw new Error("Некорректный ответ");
   }
 
-  function hangupCall() {
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
-    }
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      localStream = null;
-    }
-    localAudio.style.display = 'none';
-    remoteAudio.style.display = 'none';
-    callBtn.disabled = false;
-    hangupBtn.disabled = true;
+  /* ================= App state ================= */
+  var STORE = "kotochat.v2";
+  var state = { name: "", chats: [], activeId: null };
+  var peers = [];   // {chatId, dc, name, role:"owner"|"guest"}
+  var pend = [];    // pending invites: {chatId, pc, dc}
+  var guestCtx = null; // guest join in progress: {chatId, pc, code}
+
+  function load() {
+    try {
+      var raw = localStorage.getItem(STORE);
+      if (raw) { var o = JSON.parse(raw); state.name = o.name || ""; state.chats = o.chats || []; return; }
+    } catch (e) {}
+    state.name = ""; state.chats = [];
+  }
+  function save() {
+    try {
+      var chats = state.chats.map(function (c) {
+        return { id: c.id, type: c.type, name: c.name, owner: c.owner, unread: c.unread, msgs: c.msgs.slice(-200) };
+      });
+      localStorage.setItem(STORE, JSON.stringify({ name: state.name, chats: chats }));
+    } catch (e) {}
   }
 
-  callBtn.onclick = startCall;
-  hangupBtn.onclick = hangupCall;
+  var TYPE = { contact: 0, group: 1, channel: 2 };
+  var TYPE_NAME = { contact: "Контакт", group: "Группа", channel: "Канал" };
+  var ICONS = {
+    contact: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>',
+    group: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="9" r="3.4"/><circle cx="17" cy="10.5" r="2.6"/><path d="M2.5 20c0-3.4 2.9-5.5 6.5-5.5s6.5 2.1 6.5 5.5"/></svg>',
+    channel: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4l5 4V6z"/><path d="M8 8h7a5 5 0 0 1 0 10H8"/></svg>'
+  };
 
-  // Запросить разрешение на уведомления
-  if (Notification.permission !== 'granted' && Notification.permission !== 'denied') {
-    Notification.requestPermission();
+  var ICE = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  function waitIce(pc) {
+    return new Promise(function (res) {
+      if (pc.iceGatheringState === "complete") return res();
+      var done = false;
+      var check = function () {
+        if (pc.iceGatheringState === "complete" && !done) { done = true; pc.removeEventListener("icegatheringstatechange", check); res(); }
+      };
+      pc.addEventListener("icegatheringstatechange", check);
+      setTimeout(function () { if (!done) { done = true; res(); } }, 3500);
+    });
+  }
+  function nowTime() { return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }); }
+
+  /* ================= Rendering ================= */
+  var filter = "all";
+  function renderList() {
+    var q = ($("search").value || "").toLowerCase();
+    var list = $("chatList");
+    list.innerHTML = "";
+    state.chats
+      .filter(function (c) { return (filter === "all" || c.type === filter) && (!q || c.name.toLowerCase().indexOf(q) >= 0); })
+      .forEach(function (c) {
+        var connected = c.owner
+          ? peers.some(function (p) { return p.chatId === c.id && p.dc.readyState === "open"; })
+          : peers.some(function (p) { return p.chatId === c.id && p.dc.readyState === "open"; });
+        var el = document.createElement("div");
+        el.className = "chat-item" + (c.id === state.activeId ? " active" : "");
+        var last = c.msgs[c.msgs.length - 1];
+        el.innerHTML =
+          '<div class="avatar">' + (ICONS[c.type] || "") + "</div>" +
+          '<div class="chat-info"><div class="chat-name"></div><div class="chat-last"></div></div>' +
+          '<div class="chat-meta"><div class="time"></div>' + (c.unread ? '<span class="badge">' + c.unread + "</span>" : "") + "</div>";
+        el.querySelector(".chat-name").textContent = c.name;
+        el.querySelector(".chat-last").textContent = last ? (last.from ? last.from + ": " + last.text : last.text) : (connected ? "Соединено" : "Нет сообщений");
+        el.querySelector(".chat-meta .time").textContent = last ? last.time : "";
+        el.onclick = function () { openChat(c.id); };
+        list.appendChild(el);
+      });
+  }
+
+  function openChat(id) {
+    state.activeId = id;
+    var c = chatById(id);
+    if (!c) return;
+    c.unread = 0; save();
+    $("mainHead").style.display = "flex";
+    $("hAvatar").innerHTML = ICONS[c.type] || "";
+    $("hName").textContent = c.name;
+    var acts = $("hActions");
+    if (c.owner) {
+      acts.innerHTML = '<button class="btn" id="btnInvite">Пригласить</button> <button class="btn ghost" id="btnDel">Удалить</button>';
+      $("btnInvite").onclick = function () { startInvite(c.id); };
+      $("btnDel").onclick = function () {
+        peers.filter(function (p) { return p.chatId === c.id; }).forEach(function (p) { try { p.dc.close(); } catch (e) {} });
+        state.chats = state.chats.filter(function (x) { return x.id !== c.id; });
+        state.activeId = null; save(); renderList(); renderMsgs(); $("mainHead").style.display = "none"; updComposer();
+      };
+    } else {
+      acts.innerHTML = '<button class="btn ghost" id="btnLeave">Выйти</button>';
+      $("btnLeave").onclick = function () {
+        peers.filter(function (p) { return p.chatId === c.id; }).forEach(function (p) { try { p.dc.close(); } catch (e) {} });
+        state.chats = state.chats.filter(function (x) { return x.id !== c.id; });
+        state.activeId = null; save(); renderList(); renderMsgs(); $("mainHead").style.display = "none"; updComposer();
+      };
+    }
+    renderMsgs(); renderList(); updComposer();
+    document.getElementById("app").classList.add("in-chat");
+  }
+
+  function renderMsgs() {
+    var box = $("messages");
+    var c = chatById(state.activeId);
+    if (!c) {
+      box.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.4"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.6 8.6 0 0 1-3.8-.9L3 20l1-5.1a8.4 8.4 0 1 1 17-3.4z"/></svg><div>Выберите чат или создайте новый</div></div>';
+      return;
+    }
+    box.innerHTML = "";
+    var div = document.createElement("div");
+    div.className = "divider"; div.textContent = "Сегодня";
+    box.appendChild(div);
+    c.msgs.forEach(function (m) {
+      var el = document.createElement("div");
+      el.className = "msg " + m.t;
+      if (m.from) {
+        var s = document.createElement("span"); s.className = "sender"; s.textContent = m.from; el.appendChild(s);
+      }
+      el.appendChild(document.createTextNode(m.text));
+      var t = document.createElement("span"); t.className = "time"; t.textContent = m.time; el.appendChild(t);
+      box.appendChild(el);
+    });
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function updComposer() {
+    var c = chatById(state.activeId);
+    var ok = c && peers.some(function (p) { return p.chatId === c.id && p.dc.readyState === "open"; });
+    var canWrite = ok && !(c.type === "channel" && !c.owner);
+    var inp = $("input");
+    inp.disabled = !canWrite;
+    $("send").disabled = !canWrite;
+    inp.placeholder = (c && c.type === "channel" && !c.owner) ? "В канале пишут только владелец" : "Написать сообщение...";
+  }
+
+  function chatById(id) {
+    for (var i = 0; i < state.chats.length; i++) if (state.chats[i].id === id) return state.chats[i];
+    return null;
+  }
+  function addMsg(chatId, m) {
+    var c = chatById(chatId); if (!c) return;
+    c.msgs.push(m);
+    if (state.activeId !== chatId) c.unread = (c.unread || 0) + 1;
+    save(); renderList();
+    if (state.activeId === chatId) renderMsgs();
+  }
+
+  /* ================= Wire a data channel into a chat ================= */
+  function wireChannel(chatId, dc, role) {
+    var rec = { chatId: chatId, dc: dc, name: "", role: role };
+    peers.push(rec);
+    dc.onopen = function () {
+      dc.send(JSON.stringify({ t: "hello", name: state.name || "Гость" }));
+      var c = chatById(chatId);
+      if (c && role === "guest") addMsg(chatId, { t: "sys", text: "Соединение установлено", time: nowTime() });
+      updComposer(); renderList();
+      var acts = document.querySelector(".mh-actions");
+      var sub = $("hSub");
+      var conn = peers.some(function (p) { return p.chatId === chatId && p.dc.readyState === "open"; });
+      if (conn) { sub.textContent = "в сети"; sub.className = "mh-sub on"; }
+    };
+    dc.onclose = function () {
+      peers = peers.filter(function (p) { return p !== rec; });
+      var sub = $("hSub");
+      sub.textContent = "не в сети"; sub.className = "mh-sub off";
+      updComposer(); renderList();
+    };
+    dc.onmessage = function (e) {
+      var m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      if (m.t === "hello") { rec.name = m.name || "Гость"; return; }
+      if (m.t === "msg" || m.t === "sys") {
+        addMsg(chatId, { t: m.from ? "in" : "sys", text: m.text, from: m.from || (rec.name || ""), time: m.time || nowTime() });
+        // host relays to other peers of the same chat
+        if (role === "owner") {
+          var relay = JSON.stringify(m);
+          peers.forEach(function (p) {
+            if (p.chatId === chatId && p !== rec && p.dc.readyState === "open") p.dc.send(relay);
+          });
+        }
+      }
+    };
+  }
+
+  /* ================= Modal helpers ================= */
+  function openOverlay(id) { $(id).classList.add("open"); }
+  function closeOverlay(id) { $(id).classList.remove("open"); }
+  document.querySelectorAll("[data-close]").forEach(function (b) {
+    b.onclick = function () { b.closest(".overlay").classList.remove("open"); };
+  });
+  document.querySelectorAll(".overlay").forEach(function (o) {
+    o.addEventListener("click", function (e) { if (e.target === o) o.classList.remove("open"); });
+  });
+
+  /* ================= New chat ================= */
+  var newType = "contact";
+  $("btnNew").onclick = function () { openOverlay("ovMenu"); };
+  document.querySelectorAll("[data-new]").forEach(function (el) {
+    el.onclick = function () {
+      newType = el.getAttribute("data-new");
+      $("createTitle").textContent = "Новая " + (newType === "contact" ? "группа" : (newType === "group" ? "группа" : "группа"));
+      $("createTitle").textContent = newType === "contact" ? "Новый контакт" : (newType === "group" ? "Новая группа" : "Новый канал");
+      $("createName").value = "";
+      closeOverlay("ovMenu"); openOverlay("ovCreate");
+      $("createName").focus();
+    };
+  });
+  $("btnCreateOk").onclick = function () {
+    var name = ($("createName").value || "").trim();
+    if (!name) return;
+    var c = { id: Date.now(), type: newType, name: name, owner: true, unread: 0, msgs: [] };
+    state.chats.unshift(c); save(); renderList();
+    closeOverlay("ovCreate");
+    startInvite(c.id);
+  };
+  $("btnJoinMenu").onclick = function () { closeOverlay("ovMenu"); openJoin(); };
+
+  /* ================= Host: create invite ================= */
+  var curInvite = null; // {chatId, pc}
+  function startInvite(chatId) {
+    var c = chatById(chatId);
+    closeOverlay("ovMenu");
+    $("offerOut").value = "Готовится код...".replace("Готовится код...", "Готовится...");
+    $("answerIn").value = "";
+    setInviteStatus("Собираем данные для приглашения...", false);
+    openOverlay("ovInvite");
+    try {
+      var pc = new RTCPeerConnection(ICE);
+      var dc = pc.createDataChannel("koto");
+      var p = { chatId: chatId, pc: pc };
+      curInvite = p;
+      wireChannel(chatId, dc, "owner");
+      pc.createOffer().then(function (offer) {
+        return pc.setLocalDescription(offer);
+      }).then(function () {
+        return waitIce(pc);
+      }).then(function () {
+        var code = sdpToCompactCode(pc.localDescription.sdp || pc.localDescription.sdp, TYPE[c.type], c.name);
+        $("offerOut").value = code;
+        try {
+          var url = location.href.split("#")[0] + "#j=" + code;
+          QR.draw($("qrHost"), url, 3);
+          $("qrHostBox").style.display = "flex";
+        } catch (e) {
+          $("qrHostBox").style.display = "none";
+          setInviteStatus("QR недоступен для этого кода — передайте его текстом.", true);
+          return;
+        }
+        setInviteStatus("Готово. Собеседник сканирует QR (или вставляет код), затем пришлёт вам ответ.", false);
+      }).catch(function (e) {
+        setInviteStatus("Ошибка: " + e.message, true);
+      });
+    } catch (e) {
+      setInviteStatus("WebRTC недоступен в этом окружении. Скачайте файл и откройте в браузере.", true);
+    }
+  }
+  function setInviteStatus(text, err) {
+    var st = $("inviteStatus");
+    st.textContent = text;
+    st.className = "status" + (err ? " err" : "");
+  }
+  $("btnCopyOffer").onclick = function () {
+    $("offerOut").select();
+    try { document.execCommand("copy"); setInviteStatus("Скопировано.", false); } catch (e) {}
+  };
+  $("btnAcceptAnswer").onclick = function () {
+    if (!curInvite) return;
+    try {
+      var sdp = answerCodeToSDP($("answerIn").value);
+      curInvite.pc.setRemoteDescription({ type: "answer", sdp: sdp }).then(function () {
+        setInviteStatus("Ответ принят. Устанавливаем соединение...", false);
+        setTimeout(function () { closeOverlay("ovInvite"); }, 800);
+      }).catch(function (e) {
+        setInviteStatus("Не удалось принять ответ: " + e.message, true);
+      });
+    } catch (e) {
+      setInviteStatus(e.message, true);
+    }
+  };
+
+  /* ================= Guest: join ================= */
+  function openJoin(prefill) {
+    $("offerIn").value = prefill || "";
+    $("answerOut").style.display = "none";
+    $("answerLabel").style.display = "none";
+    $("qrGuestBox").style.display = "none";
+    $("copyAnswerRow").style.display = "none";
+    $("joinStatus").textContent = "";
+    $("joinStatus").className = "status";
+    openOverlay("ovJoin");
+  }
+  $("btnJoin").onclick = function () {
+    var raw = ($("offerIn").value || "").trim();
+    if (!raw) return;
+    var code = raw.indexOf("#j=") >= 0 ? raw.split("#j=")[1] : raw;
+    var st = $("joinStatus");
+    try {
+      var info = codeToSDP(code, "answer"); // guest answers
+      st.textContent = "Устанавливаем соединение..."; st.className = "status";
+      var pc = new RTCPeerConnection(ICE);
+      var c = { id: Date.now(), type: Object.keys(TYPE).filter(function (k) { return TYPE[k] === info.type; })[0] || "contact", name: info.name, owner: false, unread: 0, msgs: [] };
+      pc.ondatachannel = function (e) {
+        wireChannel(c.id, e.channel, "guest");
+        state.chats.unshift(c); save(); renderList();
+      };
+      pc.setRemoteDescription({ type: "offer", sdp: info.sdp }).then(function () {
+        return pc.createAnswer();
+      }).then(function (ans) {
+        return pc.setLocalDescription(ans);
+      }).then(function () {
+        return waitIce(pc);
+      }).then(function () {
+        var ansCode = answerSdpToCode(pc.localDescription.sdp);
+        $("answerOut").value = ansCode;
+        $("answerOut").style.display = "block";
+        $("answerLabel").style.display = "block";
+        $("copyAnswerRow").style.display = "flex";
+        try {
+          var url = location.href.split("#")[0] + "#a=" + ansCode;
+          QR.draw($("qrGuest"), url, 3);
+          $("qrGuestBox").style.display = "flex";
+        } catch (e) { $("qrGuestBox").style.display = "none"; }
+        st.textContent = "Отправьте код-ответ владельцу чата. После его подключения начнётся обмен сообщениями.";
+        st.className = "status";
+      }).catch(function (e) {
+        st.textContent = "Ошибка соединения: " + e.message; st.className = "status err";
+      });
+    } catch (e) {
+      st.textContent = e.message; st.className = "status err";
+    }
+  };
+  $("btnCopyAnswer").onclick = function () {
+    $("answerOut").select();
+    try { document.execCommand("copy"); } catch (e) {}
+  };
+
+  /* ================= Sending ================= */
+  function send() {
+    var c = chatById(state.activeId);
+    if (!c) return;
+    var rec = peers.filter(function (p) { return p.chatId === c.id && p.dc.readyState === "open"; })[0];
+    if (!rec) return;
+    var text = $("input").value.trim();
+    if (!text) return;
+    var time = nowTime();
+    var payload = JSON.stringify({ t: "msg", text: text, time: time, from: "" });
+    rec.dc.send(payload);
+    if (c.owner) {
+      // relay own message to all other members
+      peers.forEach(function (p) { if (p.chatId === c.id && p !== rec && p.dc.readyState === "open") p.dc.send(payload); });
+      addMsg(c.id, { t: "out", text: text, time: time });
+    } else {
+      addMsg(c.id, { t: "out", text: text, time: time });
+    }
+    $("input").value = "";
+  }
+  $("send").onclick = send;
+  $("input").addEventListener("keydown", function (e) { if (e.key === "Enter") send(); });
+
+  /* ================= Tabs / search / back ================= */
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.onclick = function () {
+      document.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("active"); });
+      t.classList.add("active");
+      filter = t.getAttribute("data-f");
+      renderList();
+    };
+  });
+  $("search").addEventListener("input", renderList);
+  $("logo").addEventListener("click", function () {
+    // clicking logo on mobile returns to list
+    document.getElementById("app").classList.remove("in-chat");
+  });
+  document.querySelector(".logo").addEventListener("click", function () {
+    document.getElementById("app").classList.remove("in-chat");
+  });
+
+  /* ================= Profile ================= */
+  function askProfile() {
+    $("profileName").value = state.name || "";
+    openOverlay("ovProfile");
+  }
+  $("btnSaveProfile").onclick = function () {
+    var n = ($("profileName").value || "").trim();
+    if (!n) return;
+    state.name = n; save();
+    closeOverlay("ovProfile");
+  };
+
+  /* ================= Init ================= */
+  load();
+  renderList();
+  if (!state.name) askProfile();
+
+  // hash deep-link: #j=invite  (scanned QR opens the app with the code)
+  if (location.hash.indexOf("#j=") === 0) {
+    setTimeout(function () { openJoin(location.hash.slice(3)); }, 300);
   }
 })();
 </script>
-
 </body>
 </html>
